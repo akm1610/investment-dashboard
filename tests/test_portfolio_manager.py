@@ -270,3 +270,102 @@ def test_journal_entry_updates_holding_thesis(portfolio_with_holdings):
     pm.add_journal_entry(portfolio_with_holdings, "AAPL", "Updated thesis")
     holding = portfolio_with_holdings["holdings"]["AAPL"]
     assert holding["thesis"] == "Updated thesis"
+
+
+def test_journal_entry_has_timestamp(empty_portfolio):
+    pm.add_journal_entry(empty_portfolio, "AAPL", "Test thesis")
+    entry = pm.get_journal(empty_portfolio)[0]
+    assert "timestamp" in entry
+    assert entry["timestamp"]  # not empty
+
+
+def test_journal_no_entries_returns_empty(empty_portfolio):
+    assert pm.get_journal(empty_portfolio) == []
+
+
+# ---------------------------------------------------------------------------
+# filter_thesis_by_date
+# ---------------------------------------------------------------------------
+
+def test_filter_thesis_by_date_returns_within_range(empty_portfolio):
+    pm.add_journal_entry(empty_portfolio, "AAPL", "Early thesis")
+    entries = pm.filter_thesis_by_date(
+        empty_portfolio,
+        start_date="2000-01-01",
+        end_date="2099-12-31",
+    )
+    assert len(entries) == 1
+    assert entries[0]["symbol"] == "AAPL"
+
+
+def test_filter_thesis_by_date_excludes_out_of_range(empty_portfolio):
+    pm.add_journal_entry(empty_portfolio, "AAPL", "Some thesis")
+    # Use a date range entirely in the past
+    entries = pm.filter_thesis_by_date(
+        empty_portfolio,
+        start_date="2000-01-01",
+        end_date="2000-12-31",
+    )
+    assert entries == []
+
+
+def test_filter_thesis_by_date_filters_by_symbol(empty_portfolio):
+    pm.add_journal_entry(empty_portfolio, "AAPL", "Apple thesis")
+    pm.add_journal_entry(empty_portfolio, "MSFT", "Microsoft thesis")
+    entries = pm.filter_thesis_by_date(
+        empty_portfolio,
+        start_date="2000-01-01",
+        end_date="2099-12-31",
+        symbol="AAPL",
+    )
+    assert len(entries) == 1
+    assert entries[0]["symbol"] == "AAPL"
+
+
+def test_filter_thesis_invalid_date_returns_empty(empty_portfolio):
+    pm.add_journal_entry(empty_portfolio, "AAPL", "thesis")
+    entries = pm.filter_thesis_by_date(empty_portfolio, "not-a-date", "also-bad")
+    assert entries == []
+
+
+# ---------------------------------------------------------------------------
+# Additional edge-case / coverage tests
+# ---------------------------------------------------------------------------
+
+def test_add_holding_updates_thesis_field(empty_portfolio):
+    pm.add_holding(empty_portfolio, "AAPL", 5, 100.0, thesis="Growth play")
+    holding = empty_portfolio["holdings"]["AAPL"]
+    assert holding["thesis"] == "Growth play"
+
+
+def test_cost_basis_averaging_three_purchases(empty_portfolio):
+    pm.add_holding(empty_portfolio, "AAPL", 10, 100.0)
+    pm.add_holding(empty_portfolio, "AAPL", 10, 200.0)
+    pm.add_holding(empty_portfolio, "AAPL", 10, 300.0)
+    h = empty_portfolio["holdings"]["AAPL"]
+    assert h["shares"] == pytest.approx(30.0)
+    assert h["avg_cost"] == pytest.approx(200.0)
+
+
+def test_remove_exact_shares_closes_position(empty_portfolio):
+    pm.add_holding(empty_portfolio, "AAPL", 10, 150.0)
+    pm.remove_holding(empty_portfolio, "AAPL", shares=10)
+    assert "AAPL" not in empty_portfolio["holdings"]
+
+
+def test_portfolio_pnl_pct(portfolio_with_holdings, current_prices):
+    summary = pm.get_portfolio_summary(portfolio_with_holdings, current_prices)
+    expected_cost = 10 * 150.0 + 5 * 300.0 + 8 * 160.0
+    expected_value = 10 * 180.0 + 5 * 380.0 + 8 * 155.0
+    expected_pct = (expected_value - expected_cost) / expected_cost
+    assert summary["pnl_pct"] == pytest.approx(expected_pct)
+
+
+def test_concentration_alert_severity_present(portfolio_with_holdings, current_prices):
+    alloc = pm.compute_allocation(portfolio_with_holdings, current_prices)
+    alerts = pm.concentration_alerts(alloc, threshold=0.01)
+    assert len(alerts) > 0
+    for alert in alerts:
+        assert "type" in alert
+        assert "symbol" in alert
+        assert "weight" in alert
