@@ -338,3 +338,51 @@ def get_journal(portfolio: dict, symbol: Optional[str] = None) -> list[dict]:
     if symbol:
         entries = [e for e in entries if e["symbol"] == symbol.upper()]
     return entries
+
+
+def filter_thesis_by_date(
+    portfolio: dict,
+    start_date: str,
+    end_date: str,
+    symbol: Optional[str] = None,
+) -> list[dict]:
+    """
+    Return journal entries whose timestamp falls within [start_date, end_date].
+
+    Parameters
+    ----------
+    portfolio   : Portfolio dict.
+    start_date  : Inclusive lower bound – ISO-8601 date or datetime string
+                  (e.g. ``"2024-01-01"`` or ``"2024-01-01T00:00:00"``).
+    end_date    : Inclusive upper bound.
+    symbol      : Optional ticker to further filter results.
+
+    Returns
+    -------
+    List of matching journal-entry dicts.
+    """
+    try:
+        start_dt = datetime.fromisoformat(start_date.replace("Z", "+00:00"))
+        end_dt = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
+    except ValueError as exc:
+        logger.error("filter_thesis_by_date: invalid date – %s", exc)
+        return []
+
+    # Normalise both bounds to UTC-aware once, before iterating.
+    if start_dt.tzinfo is None:
+        start_dt = start_dt.replace(tzinfo=timezone.utc)
+    if end_dt.tzinfo is None:
+        end_dt = end_dt.replace(tzinfo=timezone.utc)
+
+    entries = get_journal(portfolio, symbol)
+    results = []
+    for entry in entries:
+        try:
+            ts = datetime.fromisoformat(entry["timestamp"].replace("Z", "+00:00"))
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            if start_dt <= ts <= end_dt:
+                results.append(entry)
+        except (ValueError, KeyError):
+            continue
+    return results
