@@ -1,3 +1,12 @@
+<<<<<<< copilot/build-investment-dashboard
+yfinance>=0.2.38
+pandas>=2.0.0
+numpy>=1.24.0
+streamlit>=1.32.0
+plotly>=5.18.0
+requests>=2.31.0
+python-dateutil>=2.8.2
+=======
 # Core data fetching
 yfinance>=0.2.36
 pandas>=2.0.0
@@ -13,3 +22,4 @@ streamlit>=1.35.0
 # Development / testing
 pytest>=8.0.0
 pytest-mock>=3.14.0
+>>>>>>> main

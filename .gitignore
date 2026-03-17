@@ -1,3 +1,20 @@
+<<<<<<< copilot/build-investment-dashboard
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.env
+.venv
+venv/
+*.egg
+.pytest_cache/
+.mypy_cache/
+portfolio.json
+=======
 # Byte-compiled / optimised / DLL files
 __pycache__/
 *.py[cod]
@@ -77,3 +94,4 @@ Thumbs.db
 # Application-specific cache
 *.cache
 cache/
+>>>>>>> main
