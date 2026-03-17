@@ -26,6 +26,8 @@ import json
 from datetime import date, datetime, timezone
 from typing import List
 
+THESIS_PREVIEW_LENGTH = 80  # characters; longer theses are truncated with "…"
+
 import pandas as pd
 import plotly.express as px
 import streamlit as st
@@ -57,7 +59,7 @@ def _entries_to_df(entries: List[dict]) -> pd.DataFrame:
                 "Symbol": e.get("symbol", ""),
                 "Date": date_str,
                 "Tags": ", ".join(e.get("tags", [])),
-                "Thesis Preview": (thesis_text[:80] + "…") if len(thesis_text) > 80 else thesis_text,
+                "Thesis Preview": (thesis_text[:THESIS_PREVIEW_LENGTH] + "…") if len(thesis_text) > THESIS_PREVIEW_LENGTH else thesis_text,
                 "_thesis": thesis_text,
                 "_timestamp": ts_raw,
             }

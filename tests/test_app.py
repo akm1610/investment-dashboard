@@ -309,13 +309,14 @@ class TestEntriesToDf:
 
     def test_thesis_preview_truncated(self, empty_portfolio):
         import portfolio_manager as pm
-        from components.investment_journal import _entries_to_df
+        from components.investment_journal import _entries_to_df, THESIS_PREVIEW_LENGTH
         long_thesis = "x" * 200
         pm.add_journal_entry(empty_portfolio, "TSLA", long_thesis)
         entries = pm.get_journal(empty_portfolio)
         df = _entries_to_df(entries)
         preview = df.loc[0, "Thesis Preview"]
-        assert len(preview) <= 83  # 80 chars + "…"
+        # THESIS_PREVIEW_LENGTH chars + "…" (1 char) = THESIS_PREVIEW_LENGTH + 1
+        assert len(preview) == THESIS_PREVIEW_LENGTH + 1
         assert preview.endswith("…")
 
     def test_short_thesis_not_truncated(self, empty_portfolio):

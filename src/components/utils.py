@@ -298,20 +298,21 @@ def display_ratios_table(ratios: Dict[str, float]) -> None:
 
         df = pd.DataFrame(rows)
 
+        _css_map = {
+            "green": "color: #2e7d32; font-weight: 600",
+            "orange": "color: #e65100; font-weight: 600",
+            "red": "color: #c62828; font-weight: 600",
+            "grey": "color: #9e9e9e",
+        }
+
         def _style_row(row: pd.Series) -> list:
-            color = row["_color"]
-            css = {
-                "green": "color: #2e7d32; font-weight: 600",
-                "orange": "color: #e65100; font-weight: 600",
-                "red": "color: #c62828; font-weight: 600",
-                "grey": "color: #9e9e9e",
-            }.get(color, "")
-            return ["", css, ""]
+            # row.name is the integer index into df
+            color = df.loc[row.name, "_color"]
+            css = _css_map.get(color, "")
+            # display_df has 2 columns: "Metric" (unstyled) and "Value" (styled)
+            return ["", css]
 
         display_df = df[["Metric", "Value"]].copy()
-        styled = display_df.style.apply(
-            lambda row: ["", _style_row(df.loc[row.name])[1]],  # type: ignore[arg-type]
-            axis=1,
-        )
+        styled = display_df.style.apply(_style_row, axis=1)
         st.dataframe(styled, use_container_width=True, hide_index=True)
         st.markdown("")
