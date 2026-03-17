@@ -1,0 +1,15 @@
+# Core data fetching
+yfinance>=0.2.36
+pandas>=2.0.0
+requests>=2.31.0
+python-dateutil>=2.8.2
+
+# Numerical computing
+numpy>=1.26.0
+
+# Optional: web dashboard (future modules)
+streamlit>=1.35.0
+
+# Development / testing
+pytest>=8.0.0
+pytest-mock>=3.14.0
