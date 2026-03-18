@@ -11,11 +11,13 @@ Architecture
 * Multi-page app using ``st.navigation()`` and ``st.Page()``
 * Session state for portfolio persistence and analysis caching
 * Sidebar for navigation, quick-add form, and settings
-* Four pages:
-  1. Company Analysis   – deep-dive into a single ticker
-  2. Portfolio Overview – holdings, allocation, rebalancing
-  3. Pre-Trade Checklist – 7-item decision gate
-  4. Investment Journal  – timestamped thesis records
+* Six pages:
+  1. Company Analysis        – deep-dive into a single ticker
+  2. Portfolio Overview      – holdings, allocation, rebalancing
+  3. Pre-Trade Checklist     – 7-item decision gate
+  4. Investment Journal      – timestamped thesis records
+  5. Risk & Recommendations  – risk profile assessment + curated watchlists
+  6. Strategy Backtesting    – historical strategy testing and validation
 """
 
 from __future__ import annotations
@@ -44,6 +46,8 @@ from components.company_analysis import page_company_analysis
 from components.investment_journal import page_investment_journal
 from components.portfolio_overview import page_portfolio_overview
 from components.pretrade_checklist import page_pretrade_checklist
+from components.risk_recommendations import page_risk_recommendations
+from components.backtesting import page_backtesting
 from components.sidebar import render_sidebar
 
 logging.basicConfig(level=logging.WARNING)
@@ -82,6 +86,24 @@ def _init_session_state() -> None:
     if "currency" not in st.session_state:
         st.session_state.currency = "USD ($)"
 
+    if "risk_profile" not in st.session_state:
+        st.session_state.risk_profile = "moderate"
+
+    if "risk_profile_result" not in st.session_state:
+        st.session_state.risk_profile_result = None
+
+    if "backtest_results" not in st.session_state:
+        st.session_state.backtest_results = {}
+
+    if "bt_comparisons" not in st.session_state:
+        st.session_state.bt_comparisons = {}
+
+    if "recommendations" not in st.session_state:
+        st.session_state.recommendations = []
+
+    if "watchlists" not in st.session_state:
+        st.session_state.watchlists = {}
+
 
 # ---------------------------------------------------------------------------
 # Main
@@ -100,6 +122,8 @@ def main() -> None:
         st.Page(page_portfolio_overview, title="Portfolio Overview", icon="💼"),
         st.Page(page_pretrade_checklist, title="Pre-Trade Checklist", icon="✅"),
         st.Page(page_investment_journal, title="Investment Journal", icon="📓"),
+        st.Page(page_risk_recommendations, title="Risk & Recommendations", icon="🛡️"),
+        st.Page(page_backtesting, title="Strategy Backtesting", icon="📈"),
     ]
 
     page = st.navigation(pages)
