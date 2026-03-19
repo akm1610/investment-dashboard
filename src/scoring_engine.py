@@ -1,0 +1,394 @@
+"""
+Intelligent scoring engine for investment recommendations.
+
+Provides context-aware scoring functions that properly differentiate stocks
+across the full 0–10 range instead of clustering everything around 4.5–6.
+"""
+
+from __future__ import annotations
+
+from typing import Dict, Optional
+
+
+# ---------------------------------------------------------------------------
+# 1. Intelligent Fundamentals Scoring
+# ---------------------------------------------------------------------------
+
+def score_fundamentals_intelligent(fundamentals: Dict) -> float:
+    """Score fundamentals (0–10) based on quality and growth.
+
+    Priorities:
+    1. Profitability (ROE, margins) – rewarded heavily
+    2. Margins (gross / operating) – quality indicator
+    3. Valuation (PEG ratio logic) – P/E in context of growth
+    4. Safety (debt, liquidity) – penalise only when dangerous
+
+    Parameters
+    ----------
+    fundamentals:
+        Dict with keys: roe, gross_margin, operating_margin, pe_ratio,
+        earnings_growth, debt_to_equity, current_ratio.  Missing / None
+        values are treated as neutral (zero or sensible default).
+
+    Returns
+    -------
+    float in [0, 10]
+    """
+    score = 5.0
+
+    # 1. Profitability: ROE
+    roe = fundamentals.get("roe") or 0.0
+    if roe > 0.20:
+        score += 2.5  # Exceptional
+    elif roe > 0.15:
+        score += 2.0
+    elif roe > 0.10:
+        score += 1.5
+    elif roe > 0.05:
+        score += 1.0
+    elif roe < 0:
+        score -= 1.5  # Negative ROE is a red flag
+
+    # 2. Margins
+    gross_margin = fundamentals.get("gross_margin") or 0.0
+    operating_margin = fundamentals.get("operating_margin") or 0.0
+
+    if gross_margin > 0.40:
+        score += 1.5  # Premium business model
+    elif gross_margin > 0.30:
+        score += 1.0
+
+    if operating_margin > 0.25:
+        score += 1.0  # Highly efficient operations
+    elif operating_margin > 0.15:
+        score += 0.5
+
+    # 3. Valuation: PEG ratio (P/E in context of growth)
+    pe = fundamentals.get("pe_ratio") or 0.0
+    growth_rate = fundamentals.get("earnings_growth") or 0.05  # default 5 %
+
+    if pe > 0:
+        peg = pe / (growth_rate * 100) if growth_rate > 0 else pe
+
+        if peg < 1.0:
+            score += 1.5  # Cheap relative to growth
+        elif peg < 1.5:
+            score += 1.0  # Fairly valued
+        elif peg < 2.0:
+            score += 0.5
+        elif peg > 3.0:
+            score -= 1.0  # Overvalued relative to growth
+
+    # 4. Safety: debt and liquidity
+    debt_to_equity = fundamentals.get("debt_to_equity") or 0.0
+    current_ratio = fundamentals.get("current_ratio") or 1.0
+
+    if debt_to_equity < 0.5:
+        score += 0.5  # Strong balance sheet
+    elif debt_to_equity > 3.0:
+        score -= 1.0  # High leverage risk
+
+    if current_ratio < 0.5:
+        score -= 1.0  # Liquidity concern
+    elif current_ratio > 2.0:
+        score += 0.5  # Strong liquidity
+
+    return max(0.0, min(10.0, score))
+
+
+# ---------------------------------------------------------------------------
+# 2. Contextualised Risk Scoring
+# ---------------------------------------------------------------------------
+
+def contextualize_risk(
+    risk_metrics: Dict,
+    fundamentals: Dict,
+    technicals: Dict,
+) -> float:
+    """Score risk (0–10) contextually.
+
+    High volatility is **not** inherently bad when:
+    * Fundamentals are strong (high ROE, margins)
+    * Growth is positive
+    * Technical trend is up
+
+    This rewards growth at appropriate risk levels and avoids
+    penalising high-quality growth companies simply for being volatile.
+
+    Parameters
+    ----------
+    risk_metrics:
+        Dict with keys: volatility, sharpe_ratio, max_drawdown.
+    fundamentals:
+        Dict with key: roe.
+    technicals:
+        Dict with key: price_vs_sma200.
+
+    Returns
+    -------
+    float in [0, 10]
+    """
+    score = 5.0
+
+    volatility = risk_metrics.get("volatility") or 0.20
+    sharpe_ratio = risk_metrics.get("sharpe_ratio") or 0.0
+    max_drawdown = risk_metrics.get("max_drawdown") or -0.20
+
+    # Base volatility adjustment
+    if volatility < 0.15:
+        score += 1.5
+    elif volatility < 0.25:
+        score += 1.0
+    elif volatility < 0.40:
+        score += 0.0   # Higher but acceptable
+    elif volatility < 0.60:
+        score -= 1.0
+    else:
+        score -= 2.0   # Extreme
+
+    # Sharpe ratio: risk-adjusted returns matter
+    if sharpe_ratio > 1.5:
+        score += 1.5
+    elif sharpe_ratio > 1.0:
+        score += 1.0
+    elif sharpe_ratio > 0.5:
+        score += 0.5
+    elif sharpe_ratio < 0:
+        score -= 1.0
+
+    # Drawdown: deep drawdowns are concerning
+    if max_drawdown > -0.15:
+        score += 0.5
+    elif max_drawdown > -0.30:
+        score += 0.0
+    elif max_drawdown > -0.50:
+        score -= 1.0
+    else:
+        score -= 2.0
+
+    # Context: strong fundamentals reduce the penalty for high volatility
+    roe = fundamentals.get("roe") or 0.0
+    if roe > 0.15 and volatility > 0.40:
+        score += 1.0  # Quality growth stock — volatility is acceptable
+
+    # Context: uptrend makes volatility less scary
+    price_vs_sma200 = technicals.get("price_vs_sma200") or 0.0
+    if price_vs_sma200 > 0.05 and volatility > 0.35:
+        score += 0.5  # Volatility in uptrend is growth, not pure risk
+
+    return max(0.0, min(10.0, score))
+
+
+# ---------------------------------------------------------------------------
+# 3. Meaningful ML Scoring
+# ---------------------------------------------------------------------------
+
+def score_ml_meaningfully(ml_prediction: Dict, fundamentals: Dict) -> float:
+    """Score ML prediction (0–10) weighted by conviction.
+
+    Instead of mapping every stock to 50 % confidence HOLD:
+    * Strong model agreement → high conviction bonus
+    * ML aligned with fundamentals → reinforces signal
+    * ML conflicts fundamentals → reduces extreme signals
+
+    Parameters
+    ----------
+    ml_prediction:
+        Dict with keys: signal, confidence, model_votes.
+    fundamentals:
+        Dict with key: roe.
+
+    Returns
+    -------
+    float in [0, 10]
+    """
+    score = 5.0
+
+    signal = ml_prediction.get("signal") or "HOLD"
+    confidence = ml_prediction.get("confidence") or 50.0
+    model_votes: Dict = ml_prediction.get("model_votes") or {}
+
+    # Count agreement among constituent models
+    buy_votes = sum(1 for v in model_votes.values() if v == "BUY")
+    sell_votes = sum(1 for v in model_votes.values() if v == "SELL")
+    total_models = len(model_votes) or 1
+
+    # Measure how strongly models agree (higher = more unanimous)
+    consensus = abs(buy_votes - sell_votes) / total_models
+
+    if signal == "BUY":
+        score += min(2.5, confidence / 40.0)  # 50 % → +1.25, 100 % → +2.5
+
+        # Bonus for model agreement
+        if consensus > 0.5:
+            score += 1.0
+
+        # Extra bonus for high confidence
+        if confidence > 75:
+            score += 0.5
+
+    elif signal == "SELL":
+        score -= min(2.5, confidence / 40.0)
+
+        # Penalty for unanimous downside agreement
+        if consensus > 0.5:
+            score -= 1.0
+
+    # Cross-check with fundamentals
+    roe = fundamentals.get("roe") or 0.0
+
+    if signal == "BUY" and roe < 0:
+        # ML bullish but fundamentals negative → reduce conviction
+        score -= 1.0
+
+    if signal == "SELL" and roe > 0.15:
+        # ML bearish but fundamentals strong → soften signal
+        score += 1.0
+
+    return max(0.0, min(10.0, score))
+
+
+# ---------------------------------------------------------------------------
+# 4. Sentiment Scoring
+# ---------------------------------------------------------------------------
+
+def score_sentiment(ticker: str) -> float:  # noqa: ARG001
+    """Score sentiment (0–10) from analyst ratings, news, and insider activity.
+
+    When live sentiment data is unavailable the function returns a neutral 5.0
+    so it does not distort the overall score.
+
+    Parameters
+    ----------
+    ticker:
+        Stock ticker symbol (reserved for future live-data integration).
+
+    Returns
+    -------
+    float in [0, 10]
+    """
+    score = 5.0
+
+    try:
+        analyst_rating: Optional[float] = _get_analyst_rating(ticker)
+        if analyst_rating is not None:
+            # analyst_rating is 1–5; re-centre around 2.5 → ±1.0 adjustment
+            score += (analyst_rating - 2.5) * 0.4
+
+        news_sentiment: Optional[float] = _get_news_sentiment(ticker)
+        if news_sentiment is not None:
+            # news_sentiment is -1 to +1 → ±2.0 adjustment
+            score += news_sentiment * 2.0
+
+        insider_activity: Optional[float] = _get_insider_activity(ticker)
+        if insider_activity is not None:
+            if insider_activity > 0:
+                score += min(1.0, insider_activity / 1000.0)
+            elif insider_activity < 0:
+                score -= min(0.5, abs(insider_activity) / 2000.0)
+
+    except Exception:  # noqa: BLE001
+        pass  # If sentiment unavailable, use neutral
+
+    return max(0.0, min(10.0, score))
+
+
+# ---------------------------------------------------------------------------
+# 5. ETF Exposure Scoring
+# ---------------------------------------------------------------------------
+
+def score_etf_exposure(ticker: str) -> float:  # noqa: ARG001
+    """Score ETF exposure (0–10).
+
+    Inclusion in major ETFs is a quality signal — it means institutional
+    inclusion criteria have been met.  Falls back to neutral 5.0 when live
+    ETF data is unavailable.
+
+    Parameters
+    ----------
+    ticker:
+        Stock ticker symbol (reserved for future live-data integration).
+
+    Returns
+    -------
+    float in [0, 10]
+    """
+    score = 5.0
+
+    try:
+        etf_inclusion = _get_etf_inclusion(ticker)
+
+        if "SPY" in etf_inclusion or "QQQ" in etf_inclusion:
+            score += 1.0
+
+        if "ESG" in str(etf_inclusion).upper():
+            score += 0.5
+
+        num_etfs = len(etf_inclusion)
+        if num_etfs > 50:
+            score += 1.0
+        elif num_etfs > 20:
+            score += 0.5
+
+    except Exception:  # noqa: BLE001
+        pass
+
+    return max(0.0, min(10.0, score))
+
+
+# ---------------------------------------------------------------------------
+# 6. Distribution Stretching
+# ---------------------------------------------------------------------------
+
+def stretch_distribution(raw_score: float, mean: float = 5.5, factor: float = 1.4) -> float:
+    """Stretch a raw score so that the output uses the full 0–10 range.
+
+    The transformation ``(x - mean) * factor + mean`` preserves the ordering
+    of stocks while spreading them out so that exceptional stocks land near
+    9–10 and weak stocks land near 1–2.
+
+    ``mean`` is set to **5.5** (rather than 5.0) because the individual
+    scoring functions all start from a baseline of 5.0 but have more upward
+    adjustment headroom than downward.  Empirically the unweighted average of
+    component scores clusters slightly above 5.0, so centering the stretch at
+    5.5 prevents a systematic upward bias in the final output.
+
+    Parameters
+    ----------
+    raw_score:
+        Weighted average score before stretching.
+    mean:
+        Centre of distribution (default 5.5).
+    factor:
+        Stretch multiplier (default 1.4).
+
+    Returns
+    -------
+    float in [0, 10]
+    """
+    stretched = (raw_score - mean) * factor + mean
+    return max(0.0, min(10.0, stretched))
+
+
+# ---------------------------------------------------------------------------
+# Private helpers (stubs for future live-data integration)
+# ---------------------------------------------------------------------------
+
+def _get_analyst_rating(ticker: str) -> Optional[float]:  # noqa: ARG001
+    """Return analyst rating (1–5) or None if unavailable."""
+    return None
+
+
+def _get_news_sentiment(ticker: str) -> Optional[float]:  # noqa: ARG001
+    """Return news sentiment score (-1 to +1) or None if unavailable."""
+    return None
+
+
+def _get_insider_activity(ticker: str) -> Optional[float]:  # noqa: ARG001
+    """Return net insider share activity or None if unavailable."""
+    return None
+
+
+def _get_etf_inclusion(ticker: str) -> list:  # noqa: ARG001
+    """Return list of ETF tickers that include this stock, or empty list."""
+    return []

@@ -19,6 +19,14 @@ import numpy as np
 from src.data_fetcher import DataFetcher
 from src.ml_engine import RecommendationEngine, FeatureEngineer
 from src.risk_engine import PortfolioRiskAnalyzer
+from src.scoring_engine import (
+    score_fundamentals_intelligent,
+    contextualize_risk,
+    score_ml_meaningfully,
+    score_sentiment,
+    score_etf_exposure,
+    stretch_distribution,
+)
 
 
 class SystemValidator:
@@ -46,7 +54,7 @@ class SystemValidator:
             print(f"      ✓ Data Points: {len(price_data)} days")
 
             # 2. Fundamentals Analysis
-            print(f"\n[2/5] Analyzing Fundamentals...")
+            print(f"\n[2/6] Analyzing Fundamentals...")
             fundamentals = fetcher.calculate_basic_ratios()
             fundamentals_score = self._score_fundamentals(fundamentals)
 
@@ -59,7 +67,7 @@ class SystemValidator:
                         print(f"      • {key}: {value}")
 
             # 3. Technical Analysis
-            print(f"\n[3/5] Analyzing Technicals...")
+            print(f"\n[3/6] Analyzing Technicals...")
             technicals_df = self.feature_engineer.extract_technical_features(price_data)
             technicals = (
                 technicals_df.iloc[-1].to_dict() if not technicals_df.empty else {}
@@ -79,9 +87,9 @@ class SystemValidator:
                     print(f"      • {key}: {value:.4f}")
 
             # 4. Risk Assessment
-            print(f"\n[4/5] Analyzing Risk...")
+            print(f"\n[4/6] Analyzing Risk...")
             risk_metrics = self._compute_risk_metrics(price_data)
-            risk_score = self._score_risk(risk_metrics)
+            risk_score = contextualize_risk(risk_metrics, fundamentals, technicals)
 
             print(f"      Risk Score: {risk_score:.1f}/10")
             for key, value in risk_metrics.items():
@@ -91,24 +99,35 @@ class SystemValidator:
                     print(f"      • {key}: {value}")
 
             # 5. ML Prediction
-            print(f"\n[5/5] Running ML Models...")
+            print(f"\n[5/6] Running ML Models...")
             ml_pred = self.ml_engine.predict(ticker, features=technicals_df)
-            ml_confidence = ml_pred.get("confidence", 50.0)
-            ml_score = ml_confidence / 10.0  # Normalize 0-100 → 0-10
+            ml_score = score_ml_meaningfully(ml_pred, fundamentals)
 
+            ml_confidence = ml_pred.get("confidence", 50.0)
             print(f"      ML Confidence: {ml_confidence:.1f}%")
             print(f"      Signal: {ml_pred.get('signal', 'HOLD')}")
+            print(f"      ML Score: {ml_score:.1f}/10")
             model_votes = ml_pred.get("model_votes", {})
             if model_votes:
                 print(f"      Model Votes: {model_votes}")
 
-            # 6. Calculate final score
-            final_score = (
-                fundamentals_score * 0.35
+            # 6. Sentiment & ETF
+            print(f"\n[6/6] Scoring Sentiment & ETF Exposure...")
+            sentiment_score = score_sentiment(ticker)
+            etf_score = score_etf_exposure(ticker)
+            print(f"      Sentiment Score: {sentiment_score:.1f}/10")
+            print(f"      ETF Exposure Score: {etf_score:.1f}/10")
+
+            # 7. Calculate final score using intelligent weighted formula
+            raw_score = (
+                fundamentals_score * 0.40
                 + technicals_score * 0.25
-                + risk_score * 0.20
-                + ml_score * 0.20
+                + risk_score * 0.15
+                + ml_score * 0.12
+                + sentiment_score * 0.05
+                + etf_score * 0.03
             )
+            final_score = stretch_distribution(raw_score)
 
             result = {
                 "ticker": ticker,
@@ -118,6 +137,8 @@ class SystemValidator:
                 "technicals_score": technicals_score,
                 "risk_score": risk_score,
                 "ml_score": ml_score,
+                "sentiment_score": sentiment_score,
+                "etf_score": etf_score,
                 "fundamentals": fundamentals,
                 "technicals": technicals,
                 "risk_metrics": risk_metrics,
@@ -142,30 +163,8 @@ class SystemValidator:
     # ------------------------------------------------------------------
 
     def _score_fundamentals(self, fundamentals: Dict) -> float:
-        """Score fundamentals 0-10."""
-        score = 5.0
-
-        pe = fundamentals.get("pe_ratio") or 0.0
-        if 15 <= pe <= 25:
-            score += 2
-        elif 0 < pe < 15:
-            score += 1
-        elif pe > 30:
-            score -= 1
-
-        roe = fundamentals.get("roe") or 0.0
-        if roe > 0.15:
-            score += 2
-        elif roe > 0.10:
-            score += 1
-
-        debt_to_equity = fundamentals.get("debt_to_equity") or 0.0
-        if 0 < debt_to_equity < 1.0:
-            score += 1
-        elif debt_to_equity > 2.0:
-            score -= 1
-
-        return max(0.0, min(10.0, score))
+        """Score fundamentals 0-10 using intelligent scoring engine."""
+        return score_fundamentals_intelligent(fundamentals)
 
     def _score_technicals(self, technicals: Dict, price_data: pd.DataFrame) -> float:
         """Score technicals 0-10."""
@@ -218,28 +217,6 @@ class SystemValidator:
             "max_drawdown": max_drawdown,
             "annual_return": annual_return,
         }
-
-    def _score_risk(self, risk_metrics: Dict) -> float:
-        """Score risk 0-10 (higher = better risk-adjusted profile)."""
-        score = 5.0
-
-        volatility = risk_metrics.get("volatility", 0.20)
-        if volatility < 0.15:
-            score += 2
-        elif volatility < 0.25:
-            score += 1
-        elif volatility > 0.40:
-            score -= 2
-
-        sharpe = risk_metrics.get("sharpe_ratio", 0.0)
-        if sharpe > 1.5:
-            score += 2
-        elif sharpe > 1.0:
-            score += 1
-        elif sharpe < 0:
-            score -= 1
-
-        return max(0.0, min(10.0, score))
 
     def _generate_reasons(
         self,
@@ -344,15 +321,16 @@ class SystemValidator:
 
         print(
             f"\n{'Ticker':<12} {'Score':<8} {'Fundamentals':<14} "
-            f"{'Technicals':<13} {'Risk':<8} {'ML':<8}"
+            f"{'Technicals':<13} {'Risk':<8} {'ML':<8} {'Sentiment':<11} {'ETF':<6}"
         )
-        print("-" * 70)
+        print("-" * 80)
 
         for r in valid:
             print(
                 f"{r['ticker']:<12} {r['final_score']:<8.1f} "
                 f"{r['fundamentals_score']:<14.1f} {r['technicals_score']:<13.1f} "
-                f"{r['risk_score']:<8.1f} {r['ml_score']:<8.1f}"
+                f"{r['risk_score']:<8.1f} {r['ml_score']:<8.1f} "
+                f"{r.get('sentiment_score', 5.0):<11.1f} {r.get('etf_score', 5.0):<6.1f}"
             )
 
         if errors:
@@ -425,6 +403,10 @@ class SystemValidator:
         model_votes = mp.get("model_votes", {})
         if model_votes:
             print(f"  └─ Model Votes: {model_votes}")
+
+        # Sentiment & ETF
+        print(f"\nSentiment: {result.get('sentiment_score', 5.0):.1f}/10")
+        print(f"ETF Exposure: {result.get('etf_score', 5.0):.1f}/10")
 
         # Key reasons
         print(f"\nKEY REASONS:")
