@@ -9,6 +9,9 @@ from __future__ import annotations
 
 from typing import Dict, Optional
 
+import numpy as np
+import pandas as pd
+
 
 # ---------------------------------------------------------------------------
 # 1. Intelligent Fundamentals Scoring
@@ -249,7 +252,87 @@ def score_ml_meaningfully(ml_prediction: Dict, fundamentals: Dict) -> float:
 
 
 # ---------------------------------------------------------------------------
-# 4. Sentiment Scoring
+# 4. Technical Scoring
+# ---------------------------------------------------------------------------
+
+def score_technicals_intelligent(
+    technicals: Dict,
+    price_data: pd.DataFrame,
+) -> float:
+    """Score technicals (0–10) based on momentum, trend, and volume.
+
+    Uses pre-computed ``price_vs_sma200`` from the technicals dict when
+    available; falls back to computing the 200-day MA from *price_data*.
+
+    Parameters
+    ----------
+    technicals:
+        Dict with keys: rsi_14, macd_hist (or macd), price_vs_sma200,
+        volume_ratio.  Missing / NaN values are treated as neutral.
+    price_data:
+        OHLCV DataFrame.  Used as fallback for the 200-day MA calculation
+        when ``price_vs_sma200`` is not present in *technicals*.
+
+    Returns
+    -------
+    float in [0, 10]
+    """
+    score = 5.0
+
+    # RSI: oversold is a buy opportunity; overbought warrants caution
+    _rsi = technicals.get("rsi_14")
+    rsi = 50.0 if _rsi is None or (isinstance(_rsi, float) and np.isnan(_rsi)) else float(_rsi)
+
+    if 40 <= rsi <= 60:
+        score += 1.0   # Neutral zone — steady
+    elif rsi < 30:
+        score += 2.0   # Oversold — potential bounce
+    elif rsi > 70:
+        score -= 1.0   # Overbought — caution
+
+    # MACD: prefer histogram (more precise) over raw MACD line
+    _macd_hist = technicals.get("macd_hist")
+    macd_hist = 0.0 if _macd_hist is None or (isinstance(_macd_hist, float) and np.isnan(_macd_hist)) else float(_macd_hist)
+    _macd = technicals.get("macd")
+    macd = 0.0 if _macd is None or (isinstance(_macd, float) and np.isnan(_macd)) else float(_macd)
+    signal_value = macd_hist if macd_hist != 0.0 else macd
+
+    if signal_value > 0:
+        score += 1.0
+    elif signal_value < 0:
+        score -= 1.0
+
+    # Price vs 200-day MA: use pre-computed ratio when available
+    pct_vs_sma200 = technicals.get("price_vs_sma200")
+    if pct_vs_sma200 is not None and not (
+        isinstance(pct_vs_sma200, float) and np.isnan(pct_vs_sma200)
+    ):
+        if pct_vs_sma200 > 0:
+            score += 1.0
+        else:
+            score -= 0.5
+    elif price_data is not None and len(price_data) > 200:
+        price = float(price_data["Close"].iloc[-1])
+        ma_200 = float(price_data["Close"].iloc[-200:].mean())
+        if price > ma_200:
+            score += 1.0
+        else:
+            score -= 0.5
+
+    # Volume ratio: above-average volume confirms the move
+    _vol = technicals.get("volume_ratio")
+    volume_ratio = 1.0 if _vol is None or (isinstance(_vol, float) and np.isnan(_vol)) else float(_vol)
+
+    if volume_ratio > 1.2:
+        score += 0.5
+    elif volume_ratio < 0.7:
+        score -= 0.5
+
+    return max(0.0, min(10.0, score))
+
+
+# ---------------------------------------------------------------------------
+# 5. Sentiment Scoring
 # ---------------------------------------------------------------------------
 
 def score_sentiment(ticker: str) -> float:  # noqa: ARG001
@@ -294,7 +377,7 @@ def score_sentiment(ticker: str) -> float:  # noqa: ARG001
 
 
 # ---------------------------------------------------------------------------
-# 5. ETF Exposure Scoring
+# 6. ETF Exposure Scoring
 # ---------------------------------------------------------------------------
 
 def score_etf_exposure(ticker: str) -> float:  # noqa: ARG001
@@ -337,7 +420,7 @@ def score_etf_exposure(ticker: str) -> float:  # noqa: ARG001
 
 
 # ---------------------------------------------------------------------------
-# 6. Distribution Stretching
+# 7. Distribution Stretching
 # ---------------------------------------------------------------------------
 
 def stretch_distribution(raw_score: float, mean: float = 5.5, factor: float = 1.4) -> float:
@@ -368,6 +451,73 @@ def stretch_distribution(raw_score: float, mean: float = 5.5, factor: float = 1.
     """
     stretched = (raw_score - mean) * factor + mean
     return max(0.0, min(10.0, stretched))
+
+
+# ---------------------------------------------------------------------------
+# 8. Composite Intelligent Score
+# ---------------------------------------------------------------------------
+
+def calculate_intelligent_score(
+    ticker: str,
+    fundamentals: Dict,
+    technicals: Dict,
+    risk_metrics: Dict,
+    ml_prediction: Dict,
+    price_data: pd.DataFrame,
+) -> Dict[str, float]:
+    """Calculate an intelligent, differentiated composite score for a stock.
+
+    Aggregates all component scores using a quality-weighted formula and
+    stretches the result to use the full 0–10 range.
+
+    Parameters
+    ----------
+    ticker:
+        Stock ticker symbol (passed to sentiment/ETF scorers).
+    fundamentals:
+        Dict of fundamental ratios (roe, margins, pe_ratio, …).
+    technicals:
+        Dict of technical indicators (rsi_14, macd, price_vs_sma200, …).
+    risk_metrics:
+        Dict of risk measures (volatility, sharpe_ratio, max_drawdown).
+    ml_prediction:
+        Dict from the ML engine (signal, confidence, model_votes).
+    price_data:
+        OHLCV DataFrame used for technical and risk calculations.
+
+    Returns
+    -------
+    Dict with keys: fundamentals, technicals, risk, ml, sentiment, etf,
+    raw, final — all floats in [0, 10].
+    """
+    fund_score = score_fundamentals_intelligent(fundamentals)
+    tech_score = score_technicals_intelligent(technicals, price_data)
+    risk_score = contextualize_risk(risk_metrics, fundamentals, technicals)
+    ml_score = score_ml_meaningfully(ml_prediction, fundamentals)
+    sent_score = score_sentiment(ticker)
+    etf_score = score_etf_exposure(ticker)
+
+    raw_score = (
+        fund_score * 0.40
+        + tech_score * 0.25
+        + risk_score * 0.15
+        + ml_score * 0.12
+        + sent_score * 0.05
+        + etf_score * 0.03
+    )
+
+    final_score = stretch_distribution(raw_score)
+
+    return {
+        "fundamentals": fund_score,
+        "technicals": tech_score,
+        "risk": risk_score,
+        "ml": ml_score,
+        "sentiment": sent_score,
+        "etf": etf_score,
+        "raw": raw_score,
+        "final": final_score,
+    }
 
 
 # ---------------------------------------------------------------------------
