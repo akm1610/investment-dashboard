@@ -494,6 +494,10 @@ def _section_recommendations(profile: str) -> None:
 def page_risk_recommendations() -> None:
     """Risk Profile & Recommendations page."""
     st.title("🛡️ Risk Profile & Recommendations")
+    st.markdown(
+        "Discover your risk profile and receive AI-powered stock recommendations "
+        "personalised to your investment style."
+    )
 
     # Ensure session state keys are present
     if "risk_profile" not in st.session_state:
@@ -507,12 +511,11 @@ def page_risk_recommendations() -> None:
 
     with tab1:
         profile_result = _section_risk_assessment()
-        current_profile = profile_result["profile"] if profile_result else st.session_state.risk_profile
 
     with tab2:
-        current_profile_tab2 = st.session_state.get("risk_profile", "moderate")
-        _section_watchlists(current_profile_tab2)
+        current_profile = st.session_state.get("risk_profile", "moderate")
+        _section_watchlists(current_profile)
 
     with tab3:
-        current_profile_tab3 = st.session_state.get("risk_profile", "moderate")
-        _section_recommendations(current_profile_tab3)
+        current_profile = st.session_state.get("risk_profile", "moderate")
+        _section_recommendations(current_profile)
