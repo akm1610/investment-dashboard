@@ -183,23 +183,31 @@ def contextualize_risk(
 
 
 # ---------------------------------------------------------------------------
-# 3. Meaningful ML Scoring
+# 3. Intelligent ML Scoring
 # ---------------------------------------------------------------------------
 
-def score_ml_meaningfully(ml_prediction: Dict, fundamentals: Dict) -> float:
-    """Score ML prediction (0–10) weighted by conviction.
+def score_ml_intelligently(
+    ml_prediction: Dict,
+    fundamentals: Dict,
+    technicals: Dict,
+) -> float:
+    """Score ML prediction (0–10) with meaningful differentiation.
 
-    Instead of mapping every stock to 50 % confidence HOLD:
-    * Strong model agreement → high conviction bonus
-    * ML aligned with fundamentals → reinforces signal
-    * ML conflicts fundamentals → reduces extreme signals
+    Factors:
+    1. Model agreement (convergence) — all 4 agree = strong signal
+    2. Confidence level — high confidence (>70 %) = more weight
+    3. Signal direction — BUY > HOLD > SELL
+    4. Alignment with fundamentals — BUY but ROE/margin negative = red flag
+    5. Alignment with technicals — BUY but RSI oversold = confirmation
 
     Parameters
     ----------
     ml_prediction:
         Dict with keys: signal, confidence, model_votes.
     fundamentals:
-        Dict with key: roe.
+        Dict with keys: roe, pe_ratio, operating_margin.
+    technicals:
+        Dict with keys: rsi_14, price_vs_sma200.
 
     Returns
     -------
@@ -208,7 +216,7 @@ def score_ml_meaningfully(ml_prediction: Dict, fundamentals: Dict) -> float:
     score = 5.0
 
     signal = ml_prediction.get("signal") or "HOLD"
-    confidence = ml_prediction.get("confidence") or 50.0
+    confidence = float(ml_prediction.get("confidence") or 50.0)
     model_votes: Dict = ml_prediction.get("model_votes") or {}
 
     # Count agreement among constituent models
@@ -216,37 +224,88 @@ def score_ml_meaningfully(ml_prediction: Dict, fundamentals: Dict) -> float:
     sell_votes = sum(1 for v in model_votes.values() if v == "SELL")
     total_models = len(model_votes) or 1
 
-    # Measure how strongly models agree (higher = more unanimous)
-    consensus = abs(buy_votes - sell_votes) / total_models
-
     if signal == "BUY":
-        score += min(2.5, confidence / 40.0)  # 50 % → +1.25, 100 % → +2.5
+        # Base BUY score from confidence (50 % → +2, 100 % → +4)
+        base_score = 6.0 + (confidence / 50.0) * 2.0
+        score = min(8.5, base_score)
 
-        # Bonus for model agreement
-        if consensus > 0.5:
-            score += 1.0
+        # Bonus: model agreement on BUY
+        if buy_votes == total_models:
+            score += 1.0   # All models agree
+        elif buy_votes >= total_models * 0.75:
+            score += 0.7   # Strong majority
+        elif buy_votes >= total_models * 0.5:
+            score += 0.3   # Simple majority
+        else:
+            score -= 0.5   # Weak consensus
 
-        # Extra bonus for high confidence
-        if confidence > 75:
+        # Bonus: confidence level
+        if confidence > 80:
             score += 0.5
+        elif confidence < 55:
+            score -= 0.3
 
     elif signal == "SELL":
-        score -= min(2.5, confidence / 40.0)
+        # Base SELL score from confidence
+        base_score = 5.0 - (confidence / 50.0) * 2.0
+        score = max(1.5, base_score)
 
-        # Penalty for unanimous downside agreement
-        if consensus > 0.5:
+        # Penalty: model agreement on SELL
+        if sell_votes == total_models:
             score -= 1.0
+        elif sell_votes >= total_models * 0.75:
+            score -= 0.7
+        elif sell_votes >= total_models * 0.5:
+            score -= 0.3
 
-    # Cross-check with fundamentals
+        if confidence > 80:
+            score -= 0.5
+
+    else:  # HOLD
+        if confidence > 70:
+            score = 5.5   # Weak confirmation
+        elif confidence < 50:
+            score = 4.5   # Weak signal
+        else:
+            score = 5.0   # True neutral
+
+    # Fundamental alignment check
     roe = fundamentals.get("roe") or 0.0
+    margin = fundamentals.get("operating_margin") or 0.0
 
-    if signal == "BUY" and roe < 0:
-        # ML bullish but fundamentals negative → reduce conviction
-        score -= 1.0
+    if signal == "BUY":
+        if roe < 0 or margin < 0:
+            score -= 1.5   # BUY with negative fundamentals = strong red flag
+        elif roe < 0.05:
+            score -= 0.7   # BUY with weak fundamentals
+        elif roe > 0.15 and margin > 0.15:
+            score += 0.5   # BUY confirmed by great fundamentals
 
-    if signal == "SELL" and roe > 0.15:
-        # ML bearish but fundamentals strong → soften signal
-        score += 1.0
+    if signal == "SELL":
+        if roe > 0.15 and margin > 0.20:
+            score += 1.5   # Strong fundamentals override sell signal
+
+    # Technical alignment check
+    _rsi = technicals.get("rsi_14")
+    rsi = 50.0 if _rsi is None or (isinstance(_rsi, float) and np.isnan(_rsi)) else float(_rsi)
+    price_vs_ma = float(technicals.get("price_vs_sma200") or 0.0)
+
+    if signal == "BUY":
+        if rsi < 30:
+            score += 0.5   # Oversold = good entry point
+        elif rsi > 70:
+            score -= 0.5   # Overbought = risky entry
+
+        if price_vs_ma > 0.05:
+            score += 0.3   # Uptrend confirms BUY
+        elif price_vs_ma < -0.10:
+            score -= 0.5   # Downtrend conflicts with BUY
+
+    if signal == "SELL":
+        if rsi > 70:
+            score -= 0.5   # Overbought confirms SELL
+        elif rsi < 30:
+            score += 0.5   # Oversold conflicts with SELL
 
     return max(0.0, min(10.0, score))
 
@@ -493,7 +552,7 @@ def calculate_intelligent_score(
     fund_score = score_fundamentals_intelligent(fundamentals)
     tech_score = score_technicals_intelligent(technicals, price_data)
     risk_score = contextualize_risk(risk_metrics, fundamentals, technicals)
-    ml_score = score_ml_meaningfully(ml_prediction, fundamentals)
+    ml_score = score_ml_intelligently(ml_prediction, fundamentals, technicals)
     sent_score = score_sentiment(ticker)
     etf_score = score_etf_exposure(ticker)
 

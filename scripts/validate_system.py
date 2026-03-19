@@ -23,7 +23,7 @@ from src.scoring_engine import (
     score_fundamentals_intelligent,
     score_technicals_intelligent,
     contextualize_risk,
-    score_ml_meaningfully,
+    score_ml_intelligently,
     score_sentiment,
     score_etf_exposure,
     stretch_distribution,
@@ -103,7 +103,7 @@ class SystemValidator:
             # 5. ML Prediction
             print(f"\n[5/6] Running ML Models...")
             ml_pred = self.ml_engine.predict(ticker, features=technicals_df)
-            ml_score = score_ml_meaningfully(ml_pred, fundamentals)
+            ml_score = score_ml_intelligently(ml_pred, fundamentals, technicals)
 
             ml_confidence = ml_pred.get("confidence", 50.0)
             print(f"      ML Confidence: {ml_confidence:.1f}%")
