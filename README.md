@@ -93,6 +93,58 @@ results = batch_fetch(["AAPL", "MSFT", "AMZN"], fetch_type="ratios")
 
 ---
 
+## Validating the Recommendation System
+
+Run the end-to-end validation script to confirm the system is working correctly with real market data:
+
+```bash
+python scripts/validate_system.py
+```
+
+The script tests six real stocks (AAPL, NVDA, INTC, RELIANCE.NS, INFY.NS, SBIN.NS) and prints:
+
+- **Current prices** sourced live from Yahoo Finance
+- **Fundamental scores** — P/E, ROE, Debt/Equity and more
+- **Technical scores** — RSI, MACD, price vs 200-day MA and other indicators
+- **Risk metrics** — annualised volatility, Sharpe ratio, max drawdown
+- **ML predictions** — signal (BUY / HOLD / SELL) and confidence from the ensemble
+- **3–5 key reasons** explaining each score with specific numbers
+- **Benchmark comparison** vs S&P 500 (and NIFTY 50 for Indian stocks)
+
+Sample output excerpt:
+
+```
+======================================================================
+AAPL → Final Score: 7.2/10
+Current Price: $192.35
+======================================================================
+
+Fundamentals: 7.5/10
+  ├─ pe_ratio: 28.5000
+  ├─ roe: 0.9200
+  └─ debt_to_equity: 1.8000
+
+Technicals: 6.8/10
+  ├─ RSI(14): 62.0000
+  ├─ MACD Histogram: 0.4500
+  └─ Price vs SMA200: +8.20%
+
+...
+
+KEY REASONS:
+  1. P/E ratio of 28.5: Premium valuation
+  2. RSI(14) at 62: Neutral momentum
+  3. Price is 8.2% above 200-day MA (uptrend)
+  4. Annualized volatility 22.50%: Moderate risk
+  5. ML models predict BUY with 68% confidence
+
+BENCHMARK COMPARISON:
+  OUTPERFORMS S&P 500 (+0.7 points)
+======================================================================
+```
+
+---
+
 ## Running Tests
 
 ```bash
