@@ -237,67 +237,137 @@ class TestRiskRecommendationsHelpers:
 
 
 class TestWatchlistData:
-    """Verify the static watchlist data is well-formed."""
+    """Verify the watchlist strategy definitions are well-formed."""
 
     def test_watchlists_not_empty(self):
-        from components.risk_recommendations import _WATCHLISTS
+        from components.risk_recommendations import _WATCHLIST_STRATEGIES
 
-        assert len(_WATCHLISTS) > 0
+        assert len(_WATCHLIST_STRATEGIES) > 0
 
     def test_each_watchlist_has_required_fields(self):
-        from components.risk_recommendations import _WATCHLISTS
+        from components.risk_recommendations import _WATCHLIST_STRATEGIES
 
         required = {"name", "description", "strategy", "risk_level",
+                    "risk_profiles", "tickers"}
+        for strat in _WATCHLIST_STRATEGIES:
+            assert required.issubset(strat.keys()), (
+                f"Strategy {strat.get('name')} missing fields"
+            )
+
+    def test_each_watchlist_has_tickers(self):
+        from components.risk_recommendations import _WATCHLIST_STRATEGIES
+
+        for strat in _WATCHLIST_STRATEGIES:
+            assert len(strat["tickers"]) > 0, (
+                f"Strategy {strat['name']} has no tickers"
+            )
+            for ticker in strat["tickers"]:
+                assert isinstance(ticker, str) and ticker, (
+                    f"Invalid ticker {ticker!r} in {strat['name']}"
+                )
+
+    def test_risk_levels_are_valid(self):
+        from components.risk_recommendations import _WATCHLIST_STRATEGIES
+
+        valid_levels = {"LOW", "MEDIUM", "HIGH"}
+        for strat in _WATCHLIST_STRATEGIES:
+            assert strat["risk_level"] in valid_levels, (
+                f"Strategy {strat['name']} has invalid risk level {strat['risk_level']!r}"
+            )
+
+    def test_risk_profiles_are_valid(self):
+        from components.risk_recommendations import _WATCHLIST_STRATEGIES
+
+        valid = {"conservative", "moderate", "aggressive"}
+        for strat in _WATCHLIST_STRATEGIES:
+            for rp in strat["risk_profiles"]:
+                assert rp in valid, (
+                    f"Strategy {strat['name']} has invalid risk profile {rp!r}"
+                )
+
+    def test_watchlist_builder_output_structure(self):
+        """WatchlistBuilder.build_watchlist returns a well-formed watchlist dict."""
+        from unittest.mock import MagicMock
+        from src.recommendation_generator import WatchlistBuilder
+
+        holdings = [
+            {
+                "ticker": "AAPL", "score": 72, "signal": "BUY", "confidence": 72,
+                "entry_price": 180.0, "target_price": 200.0, "drivers": "MACD bullish",
+            }
+        ]
+        mock_gen = MagicMock()
+        mock_gen.generate_recommendations.return_value = holdings
+
+        builder = WatchlistBuilder()
+        wl = builder.build_watchlist(
+            name="Test WL", strategy="Growth", description="Test",
+            tickers=["AAPL"], risk_profiles=["moderate"], risk_level="MEDIUM",
+            generator=mock_gen, risk_profile="moderate",
+        )
+
+        required = {"name", "strategy", "description", "risk_level",
                     "risk_profiles", "holdings_count", "performance", "holdings"}
-        for wl in _WATCHLISTS:
-            assert required.issubset(wl.keys()), f"Watchlist {wl.get('name')} missing fields"
+        assert required.issubset(wl.keys())
+        perf = wl["performance"]
+        assert "win_rate" in perf
+        assert "avg_return" in perf
+        assert "sharpe" in perf
 
-    def test_each_watchlist_has_performance_metrics(self):
-        from components.risk_recommendations import _WATCHLISTS
+    def test_holding_fields_from_generator(self):
+        """RecommendationGenerator outputs correctly structured holding dicts."""
+        from unittest.mock import MagicMock, patch
+        import numpy as np
+        import pandas as pd
+        from src.recommendation_generator import RecommendationGenerator
+        from src.ml_engine import FeatureEngineer
 
-        for wl in _WATCHLISTS:
-            perf = wl["performance"]
-            assert "win_rate" in perf
-            assert "avg_return" in perf
-            assert "sharpe" in perf
+        rng = np.random.default_rng(0)
+        n = 300
+        dates = pd.date_range("2022-01-03", periods=n, freq="B")
+        close = 100 + np.cumsum(rng.normal(0, 1, n))
+        price_df = pd.DataFrame({
+            "Open": close * 0.99, "High": close * 1.01,
+            "Low": close * 0.98, "Close": close,
+            "Volume": rng.integers(500_000, 5_000_000, n).astype(float),
+        }, index=dates)
 
-    def test_each_holding_has_required_fields(self):
-        from components.risk_recommendations import _WATCHLISTS
+        ml_engine = MagicMock()
+        ml_engine.predict.return_value = {
+            "ticker": "AAPL", "signal": "BUY", "confidence": 72.0,
+            "strength": "MODERATE",
+            "short_term": {"signal": "BUY", "confidence": 72.0},
+            "long_term": {"signal": "BUY", "confidence": 72.0},
+            "model_votes": {"lgb": "BUY"}, "feature_importance": {},
+            "key_drivers": ["Bullish MACD"],
+        }
+        feature_engineer = FeatureEngineer()
+        gen = RecommendationGenerator(ml_engine, feature_engineer)
+
+        mock_fetcher = MagicMock()
+        mock_fetcher.fetch_stock_data.return_value = price_df
+        mock_fetcher.fetch_company_info.return_value = {}
 
         required = {"ticker", "score", "signal", "confidence",
                     "entry_price", "target_price", "drivers"}
-        for wl in _WATCHLISTS:
-            for h in wl["holdings"]:
-                assert required.issubset(h.keys()), (
-                    f"Holding {h.get('ticker')} in {wl['name']} missing fields"
-                )
 
-    def test_scores_in_valid_range(self):
-        from components.risk_recommendations import _WATCHLISTS
+        with patch("src.data_fetcher.DataFetcher", return_value=mock_fetcher):
+            recs = gen.generate_recommendations(["AAPL"], "moderate", count=5)
 
-        for wl in _WATCHLISTS:
-            for h in wl["holdings"]:
-                assert 0 <= h["score"] <= 100, (
-                    f"{h['ticker']} score {h['score']} out of range"
-                )
+        for h in recs:
+            assert required.issubset(h.keys()), f"Holding missing fields: {h}"
+            assert 0 <= h["score"] <= 100
+            assert h["signal"] in {"BUY", "HOLD", "SELL"}
 
-    def test_signals_are_valid(self):
-        from components.risk_recommendations import _WATCHLISTS
-
+    def test_signals_from_generator_are_valid(self):
+        """All signals returned by RecommendationGenerator are in valid set."""
         valid_signals = {"BUY", "HOLD", "SELL"}
-        for wl in _WATCHLISTS:
-            for h in wl["holdings"]:
-                assert h["signal"] in valid_signals, (
-                    f"{h['ticker']} has invalid signal {h['signal']!r}"
-                )
+        ml_rec = {"signal": "HOLD", "confidence": 50.0, "model_votes": {}}
+        features = pd.DataFrame({"rsi_14": [50.0]})
 
-    def test_risk_profiles_are_valid(self):
-        from components.risk_recommendations import _WATCHLISTS
-
-        valid = {"conservative", "moderate", "aggressive"}
-        for wl in _WATCHLISTS:
-            for rp in wl["risk_profiles"]:
-                assert rp in valid, f"Watchlist {wl['name']} has invalid risk profile {rp!r}"
+        from src.recommendation_generator import RecommendationGenerator
+        signal = RecommendationGenerator._compute_signal(ml_rec, features)
+        assert signal in valid_signals
 
 
 # ---------------------------------------------------------------------------
