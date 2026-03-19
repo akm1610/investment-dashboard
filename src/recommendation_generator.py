@@ -140,7 +140,7 @@ class RecommendationGenerator:
         except Exception:  # noqa: BLE001
             pass  # fundamentals optional
 
-        # Run ML prediction
+        # Run ML prediction (long_term horizon drives primary signal)
         ml_rec = self.ml_engine.predict(ticker, features=features, horizon="long_term")
 
         # Compute composite score and signal (with technical fallback)
@@ -328,7 +328,7 @@ class RecommendationGenerator:
             label = "Above" if pct > 0 else "Below"
             parts.append(f"{label} 200-day MA ({pct:+.1f}%)")
 
-        if "revenue_growth" in row.index and not np.isnan(row.get("revenue_growth", float("nan"))):
+        if "revenue_growth" in row.index and not np.isnan(row["revenue_growth"]):
             val = row["revenue_growth"] * 100
             parts.append(f"Revenue growth {val:+.1f}%")
 

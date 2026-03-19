@@ -348,8 +348,10 @@ class TestWatchlistData:
         mock_fetcher.fetch_stock_data.return_value = price_df
         mock_fetcher.fetch_company_info.return_value = {}
 
-        required = {"ticker", "score", "signal", "confidence",
-                    "entry_price", "target_price", "drivers"}
+        required = {
+            "ticker", "score", "signal", "confidence",
+            "entry_price", "target_price", "drivers",
+        }
 
         with patch("src.data_fetcher.DataFetcher", return_value=mock_fetcher):
             recs = gen.generate_recommendations(["AAPL"], "moderate", count=5)
