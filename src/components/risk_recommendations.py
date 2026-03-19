@@ -8,8 +8,8 @@ Sections
 A. Risk Profile Assessment  – 10-question 1-5 slider questionnaire,
                               real-time score & profile badge, suggested
                               allocation, save/reset actions.
-B. Curated Watchlists       – Static curated watchlists with mock performance
-                              metrics; filterable by risk profile suitability.
+B. Curated Watchlists       – ML-powered live watchlists with real performance
+                              estimates; filterable by risk profile suitability.
 C. Top Recommendations      – Personalised ranking filtered by risk profile,
                               expandable detail cards.
 """
@@ -31,32 +31,17 @@ from risk_engine import RiskProfileAssessor
 import portfolio_manager as pm
 
 # ---------------------------------------------------------------------------
-# Curated watchlists (static seed data)
+# Watchlist strategy definitions (stock universes + metadata)
 # ---------------------------------------------------------------------------
 
-_WATCHLISTS: List[Dict[str, Any]] = [
+_WATCHLIST_STRATEGIES: List[Dict[str, Any]] = [
     {
         "name": "🤖 AI Growth Leaders",
         "description": "Growth investing in AI/ML infrastructure and software",
         "strategy": "Growth",
         "risk_level": "HIGH",
         "risk_profiles": ["aggressive"],
-        "holdings_count": 24,
-        "performance": {"win_rate": 0.73, "avg_return": 0.082, "sharpe": 1.20},
-        "holdings": [
-            {"ticker": "NVDA", "score": 87, "signal": "BUY", "confidence": 82,
-             "entry_price": 875.0, "target_price": 1050.0,
-             "drivers": "AI demand, earnings growth"},
-            {"ticker": "MSFT", "score": 81, "signal": "BUY", "confidence": 78,
-             "entry_price": 420.0, "target_price": 490.0,
-             "drivers": "Azure growth, Copilot adoption"},
-            {"ticker": "GOOGL", "score": 76, "signal": "BUY", "confidence": 71,
-             "entry_price": 175.0, "target_price": 205.0,
-             "drivers": "Search dominance, cloud growth"},
-            {"ticker": "META", "score": 74, "signal": "HOLD", "confidence": 65,
-             "entry_price": 510.0, "target_price": 560.0,
-             "drivers": "Ad revenue, AI integration"},
-        ],
+        "tickers": ["NVDA", "MSFT", "GOOGL", "META", "AMZN", "CRM", "AMD", "AVGO"],
     },
     {
         "name": "💰 Dividend Aristocrats",
@@ -64,22 +49,7 @@ _WATCHLISTS: List[Dict[str, Any]] = [
         "strategy": "Income",
         "risk_level": "LOW",
         "risk_profiles": ["conservative", "moderate"],
-        "holdings_count": 18,
-        "performance": {"win_rate": 0.68, "avg_return": 0.045, "sharpe": 1.05},
-        "holdings": [
-            {"ticker": "JNJ", "score": 79, "signal": "BUY", "confidence": 74,
-             "entry_price": 147.0, "target_price": 165.0,
-             "drivers": "Dividend growth, healthcare stability"},
-            {"ticker": "PG", "score": 75, "signal": "BUY", "confidence": 70,
-             "entry_price": 160.0, "target_price": 178.0,
-             "drivers": "Pricing power, brand moat"},
-            {"ticker": "KO", "score": 72, "signal": "HOLD", "confidence": 66,
-             "entry_price": 62.0, "target_price": 68.0,
-             "drivers": "Dividend yield, global distribution"},
-            {"ticker": "MMM", "score": 55, "signal": "HOLD", "confidence": 52,
-             "entry_price": 95.0, "target_price": 100.0,
-             "drivers": "Restructuring, spin-off value"},
-        ],
+        "tickers": ["JNJ", "PG", "KO", "MMM", "MCD", "T", "VZ", "XOM"],
     },
     {
         "name": "📈 Value Opportunities",
@@ -87,22 +57,7 @@ _WATCHLISTS: List[Dict[str, Any]] = [
         "strategy": "Value",
         "risk_level": "MEDIUM",
         "risk_profiles": ["conservative", "moderate", "aggressive"],
-        "holdings_count": 20,
-        "performance": {"win_rate": 0.64, "avg_return": 0.062, "sharpe": 0.95},
-        "holdings": [
-            {"ticker": "BRK.B", "score": 83, "signal": "BUY", "confidence": 80,
-             "entry_price": 362.0, "target_price": 415.0,
-             "drivers": "Buffett track record, insurance float"},
-            {"ticker": "JPM", "score": 78, "signal": "BUY", "confidence": 75,
-             "entry_price": 198.0, "target_price": 225.0,
-             "drivers": "Interest rate tailwind, loan growth"},
-            {"ticker": "BAC", "score": 70, "signal": "BUY", "confidence": 68,
-             "entry_price": 36.0, "target_price": 43.0,
-             "drivers": "Mortgage business, dividend growth"},
-            {"ticker": "WFC", "score": 66, "signal": "HOLD", "confidence": 60,
-             "entry_price": 58.0, "target_price": 65.0,
-             "drivers": "Regulatory easing, efficiency"},
-        ],
+        "tickers": ["BRK-B", "JPM", "BAC", "WFC", "C", "GS", "MS", "USB"],
     },
     {
         "name": "🌱 ESG Leaders",
@@ -110,19 +65,7 @@ _WATCHLISTS: List[Dict[str, Any]] = [
         "strategy": "ESG",
         "risk_level": "MEDIUM",
         "risk_profiles": ["moderate", "aggressive"],
-        "holdings_count": 15,
-        "performance": {"win_rate": 0.61, "avg_return": 0.055, "sharpe": 0.88},
-        "holdings": [
-            {"ticker": "TSLA", "score": 69, "signal": "HOLD", "confidence": 58,
-             "entry_price": 200.0, "target_price": 240.0,
-             "drivers": "EV growth, energy storage"},
-            {"ticker": "NEE", "score": 73, "signal": "BUY", "confidence": 68,
-             "entry_price": 65.0, "target_price": 76.0,
-             "drivers": "Renewables growth, regulated utilities"},
-            {"ticker": "ENPH", "score": 64, "signal": "HOLD", "confidence": 55,
-             "entry_price": 110.0, "target_price": 128.0,
-             "drivers": "Solar adoption, IRA incentives"},
-        ],
+        "tickers": ["TSLA", "NEE", "ENPH", "SEDG", "FSLR", "PLUG", "RUN", "BEPC"],
     },
     {
         "name": "🏥 Healthcare Innovation",
@@ -130,19 +73,7 @@ _WATCHLISTS: List[Dict[str, Any]] = [
         "strategy": "Sector",
         "risk_level": "HIGH",
         "risk_profiles": ["moderate", "aggressive"],
-        "holdings_count": 22,
-        "performance": {"win_rate": 0.58, "avg_return": 0.071, "sharpe": 0.82},
-        "holdings": [
-            {"ticker": "LLY", "score": 88, "signal": "BUY", "confidence": 84,
-             "entry_price": 780.0, "target_price": 920.0,
-             "drivers": "GLP-1 drugs, Alzheimer's pipeline"},
-            {"ticker": "ABBV", "score": 76, "signal": "BUY", "confidence": 72,
-             "entry_price": 165.0, "target_price": 190.0,
-             "drivers": "Immunology pipeline, Skyrizi/Rinvoq"},
-            {"ticker": "UNH", "score": 80, "signal": "BUY", "confidence": 77,
-             "entry_price": 520.0, "target_price": 595.0,
-             "drivers": "Managed care growth, Optum expansion"},
-        ],
+        "tickers": ["LLY", "ABBV", "UNH", "JNJ", "MRK", "BMY", "AMGN", "GILD"],
     },
 ]
 
@@ -150,6 +81,47 @@ _RISK_LEVEL_COLOR = {"LOW": "green", "MEDIUM": "orange", "HIGH": "red"}
 _SIGNAL_COLOR = {"BUY": "green", "HOLD": "orange", "SELL": "red"}
 
 _ASSESSOR = RiskProfileAssessor()
+
+# ---------------------------------------------------------------------------
+# ML engine initialisation (cached for the lifetime of the Streamlit process)
+# ---------------------------------------------------------------------------
+
+
+@st.cache_resource(show_spinner="Initialising ML recommendation engine…")
+def _get_recommendation_engine():
+    """Return a (RecommendationGenerator, WatchlistBuilder) tuple, cached."""
+    from src.ml_engine import FeatureEngineer, RecommendationEngine
+    from src.recommendation_generator import RecommendationGenerator, WatchlistBuilder
+
+    ml_engine = RecommendationEngine()
+    feature_engineer = FeatureEngineer()
+    generator = RecommendationGenerator(ml_engine, feature_engineer)
+    builder = WatchlistBuilder()
+    return generator, builder
+
+
+@st.cache_data(ttl=3600, show_spinner="Fetching live ML recommendations…")
+def _cached_watchlist(
+    name: str,
+    strategy: str,
+    description: str,
+    tickers_tuple: tuple,
+    risk_profiles_tuple: tuple,
+    risk_level: str,
+    risk_profile: str,
+) -> Dict[str, Any]:
+    """Cache a single watchlist for 1 hour, keyed by all parameters."""
+    generator, builder = _get_recommendation_engine()
+    return builder.build_watchlist(
+        name=name,
+        strategy=strategy,
+        description=description,
+        tickers=list(tickers_tuple),
+        risk_profiles=list(risk_profiles_tuple),
+        risk_level=risk_level,
+        generator=generator,
+        risk_profile=risk_profile,
+    )
 
 # ---------------------------------------------------------------------------
 # Helper utilities
@@ -264,22 +236,56 @@ def _section_risk_assessment() -> Optional[Dict[str, Any]]:
 
 
 def _section_watchlists(profile: str) -> None:
-    """Render curated watchlists, optionally filtered by risk profile."""
+    """Render ML-powered watchlists, optionally filtered by risk profile."""
     st.subheader("📋 Curated Watchlists")
 
-    filter_profile = st.checkbox(
+    col_filter, col_sort, col_refresh = st.columns([2, 2, 1])
+    filter_profile = col_filter.checkbox(
         f"Show only watchlists suitable for {_profile_badge(profile)} profile",
         value=True,
     )
-    sort_by = st.selectbox(
+    sort_by = col_sort.selectbox(
         "Sort watchlists by",
         ["Sharpe Ratio", "Win Rate", "Avg Return", "Risk Level"],
         index=0,
     )
+    if col_refresh.button("🔄 Refresh", help="Clear cached predictions and re-fetch live data"):
+        _cached_watchlist.clear()
+        st.rerun()
 
-    watchlists = _WATCHLISTS
-    if filter_profile:
-        watchlists = [w for w in watchlists if profile in w["risk_profiles"]]
+    # Build live watchlists (with per-watchlist caching)
+    strategies = (
+        [s for s in _WATCHLIST_STRATEGIES if profile in s["risk_profiles"]]
+        if filter_profile
+        else _WATCHLIST_STRATEGIES
+    )
+
+    if not strategies:
+        st.info("No watchlists match the current filter. Try unchecking the profile filter.")
+        return
+
+    watchlists: List[Dict[str, Any]] = []
+    progress = st.progress(0, text="Loading live watchlist data…")
+    for i, strat in enumerate(strategies):
+        try:
+            wl = _cached_watchlist(
+                name=strat["name"],
+                strategy=strat["strategy"],
+                description=strat["description"],
+                tickers_tuple=tuple(strat["tickers"]),
+                risk_profiles_tuple=tuple(strat["risk_profiles"]),
+                risk_level=strat["risk_level"],
+                risk_profile=profile,
+            )
+            watchlists.append(wl)
+        except Exception as exc:  # noqa: BLE001
+            st.warning(f"Could not load {strat['name']}: {exc}")
+        progress.progress((i + 1) / len(strategies))
+    progress.empty()
+
+    if not watchlists:
+        st.info("No watchlists match the current filter. Try unchecking the profile filter.")
+        return
 
     if sort_by == "Sharpe Ratio":
         watchlists = sorted(watchlists, key=lambda w: w["performance"]["sharpe"], reverse=True)
@@ -291,30 +297,34 @@ def _section_watchlists(profile: str) -> None:
         _order = {"LOW": 0, "MEDIUM": 1, "HIGH": 2}
         watchlists = sorted(watchlists, key=lambda w: _order.get(w["risk_level"], 1))
 
-    if not watchlists:
-        st.info("No watchlists match the current filter. Try unchecking the profile filter.")
-        return
+    st.caption("📡 Live ML predictions – scores and signals are based on current market data.")
 
     for wl in watchlists:
         risk_color = _RISK_LEVEL_COLOR.get(wl["risk_level"], "grey")
         perf = wl["performance"]
+        holdings = wl.get("holdings", [])
+        holdings_shown = len(holdings)
 
         with st.expander(
             f"{wl['name']}  |  Risk: :{risk_color}[{wl['risk_level']}]"
-            f"  |  Holdings: {wl['holdings_count']}",
+            f"  |  Universe: {wl['holdings_count']} stocks  |  Showing: {holdings_shown}",
             expanded=False,
         ):
             st.markdown(f"**Strategy:** {wl['strategy']}  ·  {wl['description']}")
 
             m1, m2, m3 = st.columns(3)
-            m1.metric("90-Day Win Rate", f"{perf['win_rate']:.0%}")
-            m2.metric("Avg Return", f"+{perf['avg_return']:.1%}")
-            m3.metric("Sharpe Ratio", f"{perf['sharpe']:.2f}")
+            m1.metric("Est. Win Rate", f"{perf['win_rate']:.0%}")
+            m2.metric("Est. Avg Return", f"+{perf['avg_return']:.1%}")
+            m3.metric("Est. Sharpe Ratio", f"{perf['sharpe']:.2f}")
 
-            st.markdown("**Top Holdings:**")
+            if not holdings:
+                st.info("No holdings matched the current risk profile filter for this watchlist.")
+                continue
+
+            st.markdown("**Top Holdings (Live ML Scores):**")
 
             rows = []
-            for h in wl["holdings"]:
+            for h in holdings:
                 upside = _upside_pct(h["entry_price"], h["target_price"])
                 rows.append(
                     {
@@ -335,7 +345,7 @@ def _section_watchlists(profile: str) -> None:
 
             # Action buttons per row
             st.caption("Actions: select a ticker, then choose an action.")
-            tickers = [h["ticker"] for h in wl["holdings"]]
+            tickers = [h["ticker"] for h in holdings]
             sel_ticker = st.selectbox(
                 "Select ticker",
                 tickers,
@@ -343,7 +353,7 @@ def _section_watchlists(profile: str) -> None:
             )
             act_col1, act_col2, act_col3 = st.columns(3)
             if act_col1.button("➕ Add to Portfolio", key=f"wl_add_{wl['name']}_{sel_ticker}"):
-                _add_to_portfolio(sel_ticker, wl["holdings"])
+                _add_to_portfolio(sel_ticker, holdings)
             act_col2.button("🔍 View Analysis", key=f"wl_view_{wl['name']}_{sel_ticker}",
                             help="Navigate to Company Analysis page")
             act_col3.button("📈 Backtest", key=f"wl_bt_{wl['name']}_{sel_ticker}",
@@ -376,28 +386,58 @@ def _add_to_portfolio(ticker: str, holdings: List[Dict]) -> None:
 
 
 def _section_recommendations(profile: str) -> None:
-    """Show top recommendations filtered by the assessed risk profile."""
+    """Show top ML-powered recommendations filtered by the assessed risk profile."""
     st.subheader("🎯 Top Recommendations for Your Profile")
-    st.caption(f"Filtered for a **{profile.title()}** risk profile, ranked by composite score.")
+    st.caption(f"Filtered for a **{profile.title()}** risk profile, ranked by ML confidence score.")
 
-    # Flatten all watchlist holdings, deduplicate (keep highest score)
-    seen: Dict[str, Dict] = {}
-    for wl in _WATCHLISTS:
-        if profile not in wl["risk_profiles"]:
+    col_count, col_refresh = st.columns([3, 1])
+    top_n = col_count.slider("Number of recommendations", min_value=5, max_value=20, value=10)
+    if col_refresh.button("🔄 Refresh", key="rec_refresh",
+                          help="Clear cached predictions and re-fetch live data"):
+        _cached_watchlist.clear()
+        st.rerun()
+
+    # Collect all tickers across all watchlist strategies
+    all_tickers: List[str] = []
+    watchlist_map: Dict[str, str] = {}  # ticker → watchlist name
+    risk_level_map: Dict[str, str] = {}  # ticker → risk_level
+
+    for strat in _WATCHLIST_STRATEGIES:
+        if profile not in strat["risk_profiles"]:
             continue
-        for h in wl["holdings"]:
-            ticker = h["ticker"]
-            if ticker not in seen or h["score"] > seen[ticker]["score"]:
-                seen[ticker] = {**h, "watchlist": wl["name"], "risk_level": wl["risk_level"]}
+        for ticker in strat["tickers"]:
+            if ticker not in watchlist_map:
+                all_tickers.append(ticker)
+                watchlist_map[ticker] = strat["name"]
+                risk_level_map[ticker] = strat["risk_level"]
 
-    if not seen:
+    if not all_tickers:
         st.info("No recommendations available for the current risk profile.")
         return
 
-    recs = sorted(seen.values(), key=lambda x: x["score"], reverse=True)[:20]
+    # Generate recommendations via the ML engine
+    with st.spinner("Generating live recommendations…"):
+        try:
+            generator, _ = _get_recommendation_engine()
+            recs_raw = generator.generate_recommendations(all_tickers, profile, count=top_n)
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"Could not generate live recommendations: {exc}")
+            return
+
+    if not recs_raw:
+        st.info("No recommendations matched the current risk profile filter.")
+        return
+
+    # Augment with watchlist and risk_level metadata
+    for rec in recs_raw:
+        ticker = rec["ticker"]
+        rec.setdefault("watchlist", watchlist_map.get(ticker, "Unknown"))
+        rec.setdefault("risk_level", risk_level_map.get(ticker, "MEDIUM"))
+
+    st.caption("📡 Live ML predictions – scores and signals are based on current market data.")
 
     rows = []
-    for rank, rec in enumerate(recs, start=1):
+    for rank, rec in enumerate(recs_raw, start=1):
         upside = _upside_pct(rec["entry_price"], rec["target_price"])
         rows.append(
             {
@@ -421,7 +461,7 @@ def _section_recommendations(profile: str) -> None:
     # Expandable detail cards
     st.markdown("---")
     st.subheader("Recommendation Details")
-    for rec in recs:
+    for rec in recs_raw:
         upside = _upside_pct(rec["entry_price"], rec["target_price"])
         signal_color = _SIGNAL_COLOR.get(rec["signal"], "grey")
         with st.expander(
@@ -437,6 +477,8 @@ def _section_recommendations(profile: str) -> None:
             col2.metric("Target Price", f"${rec['target_price']:,.2f}")
             st.markdown(f"**Key Drivers:** {rec['drivers']}")
             st.markdown(f"**Source Watchlist:** {rec['watchlist']}")
+            if rec.get("model_vote_str"):
+                st.markdown(f"**Model Votes:** {rec['model_vote_str']}")
             st.markdown(
                 f"**Recommended Position Size:** {_position_size_label(rec['score'], profile)}"
             )
