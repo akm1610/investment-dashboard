@@ -21,11 +21,13 @@ from src.ml_engine import RecommendationEngine, FeatureEngineer
 from src.risk_engine import PortfolioRiskAnalyzer
 from src.scoring_engine import (
     score_fundamentals_intelligent,
+    score_technicals_intelligent,
     contextualize_risk,
     score_ml_meaningfully,
     score_sentiment,
     score_etf_exposure,
     stretch_distribution,
+    calculate_intelligent_score,
 )
 
 
@@ -56,7 +58,7 @@ class SystemValidator:
             # 2. Fundamentals Analysis
             print(f"\n[2/6] Analyzing Fundamentals...")
             fundamentals = fetcher.calculate_basic_ratios()
-            fundamentals_score = self._score_fundamentals(fundamentals)
+            fundamentals_score = score_fundamentals_intelligent(fundamentals)
 
             print(f"      Fundamentals Score: {fundamentals_score:.1f}/10")
             for key, value in fundamentals.items():
@@ -72,7 +74,7 @@ class SystemValidator:
             technicals = (
                 technicals_df.iloc[-1].to_dict() if not technicals_df.empty else {}
             )
-            technicals_score = self._score_technicals(technicals, price_data)
+            technicals_score = score_technicals_intelligent(technicals, price_data)
 
             print(f"      Technicals Score: {technicals_score:.1f}/10")
             _TECH_DISPLAY = [
@@ -118,27 +120,21 @@ class SystemValidator:
             print(f"      Sentiment Score: {sentiment_score:.1f}/10")
             print(f"      ETF Exposure Score: {etf_score:.1f}/10")
 
-            # 7. Calculate final score using intelligent weighted formula
-            raw_score = (
-                fundamentals_score * 0.40
-                + technicals_score * 0.25
-                + risk_score * 0.15
-                + ml_score * 0.12
-                + sentiment_score * 0.05
-                + etf_score * 0.03
+            # 7. Calculate final score using intelligent scoring engine
+            scores = calculate_intelligent_score(
+                ticker, fundamentals, technicals, risk_metrics, ml_pred, price_data
             )
-            final_score = stretch_distribution(raw_score)
 
             result = {
                 "ticker": ticker,
                 "current_price": current_price,
-                "final_score": final_score,
-                "fundamentals_score": fundamentals_score,
-                "technicals_score": technicals_score,
-                "risk_score": risk_score,
-                "ml_score": ml_score,
-                "sentiment_score": sentiment_score,
-                "etf_score": etf_score,
+                "final_score": scores["final"],
+                "fundamentals_score": scores["fundamentals"],
+                "technicals_score": scores["technicals"],
+                "risk_score": scores["risk"],
+                "ml_score": scores["ml"],
+                "sentiment_score": scores["sentiment"],
+                "etf_score": scores["etf"],
                 "fundamentals": fundamentals,
                 "technicals": technicals,
                 "risk_metrics": risk_metrics,
@@ -161,41 +157,6 @@ class SystemValidator:
     # ------------------------------------------------------------------
     # Scoring helpers
     # ------------------------------------------------------------------
-
-    def _score_fundamentals(self, fundamentals: Dict) -> float:
-        """Score fundamentals 0-10 using intelligent scoring engine."""
-        return score_fundamentals_intelligent(fundamentals)
-
-    def _score_technicals(self, technicals: Dict, price_data: pd.DataFrame) -> float:
-        """Score technicals 0-10."""
-        score = 5.0
-
-        rsi = technicals.get("rsi_14") or 50.0
-        if np.isnan(rsi):
-            rsi = 50.0
-        if 40 <= rsi <= 60:
-            score += 1
-        elif rsi < 30:
-            score += 2  # Oversold
-        elif rsi > 70:
-            score -= 1  # Overbought
-
-        macd_hist = technicals.get("macd_hist") or 0.0
-        if not np.isnan(macd_hist):
-            if macd_hist > 0:
-                score += 1
-            elif macd_hist < 0:
-                score -= 1
-
-        # Price vs 200-day MA
-        pct_vs_sma200 = technicals.get("price_vs_sma200")
-        if pct_vs_sma200 is not None and not np.isnan(pct_vs_sma200):
-            if pct_vs_sma200 > 0:
-                score += 1
-            else:
-                score -= 1
-
-        return max(0.0, min(10.0, score))
 
     def _compute_risk_metrics(self, price_data: pd.DataFrame) -> Dict:
         """Compute risk metrics from price history."""
