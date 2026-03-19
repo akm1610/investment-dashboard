@@ -6,7 +6,7 @@ import pytest
 from src.scoring_engine import (
     score_fundamentals_intelligent,
     contextualize_risk,
-    score_ml_meaningfully,
+    score_ml_intelligently,
     score_sentiment,
     score_etf_exposure,
     stretch_distribution,
@@ -181,80 +181,129 @@ class TestContextualizeRisk:
 
 
 # ---------------------------------------------------------------------------
-# score_ml_meaningfully
+# score_ml_intelligently
 # ---------------------------------------------------------------------------
 
-class TestScoreMlMeaningfully:
+class TestScoreMlIntelligently:
     def test_returns_float_in_range(self):
-        result = score_ml_meaningfully({}, {})
+        result = score_ml_intelligently({}, {}, {})
         assert 0.0 <= result <= 10.0
 
     def test_buy_signal_high_confidence_boosts_score(self):
-        buy_high = score_ml_meaningfully(
+        buy_high = score_ml_intelligently(
             {"signal": "BUY", "confidence": 90, "model_votes": {"a": "BUY", "b": "BUY", "c": "BUY"}},
             {},
+            {},
         )
-        hold = score_ml_meaningfully({"signal": "HOLD", "confidence": 50}, {})
+        hold = score_ml_intelligently({"signal": "HOLD", "confidence": 50}, {}, {})
         assert buy_high > hold
 
     def test_sell_signal_lowers_score(self):
-        sell = score_ml_meaningfully(
+        sell = score_ml_intelligently(
             {"signal": "SELL", "confidence": 80, "model_votes": {"a": "SELL", "b": "SELL"}},
             {},
+            {},
         )
-        neutral = score_ml_meaningfully({"signal": "HOLD", "confidence": 50}, {})
+        neutral = score_ml_intelligently({"signal": "HOLD", "confidence": 50}, {}, {})
         assert sell < neutral
 
     def test_model_agreement_bonus_for_buy(self):
-        unanimous = score_ml_meaningfully(
+        unanimous = score_ml_intelligently(
             {"signal": "BUY", "confidence": 70,
              "model_votes": {"a": "BUY", "b": "BUY", "c": "BUY", "d": "BUY"}},
             {},
+            {},
         )
-        split = score_ml_meaningfully(
+        split = score_ml_intelligently(
             {"signal": "BUY", "confidence": 70,
              "model_votes": {"a": "BUY", "b": "SELL", "c": "HOLD", "d": "BUY"}},
+            {},
             {},
         )
         assert unanimous > split
 
     def test_buy_with_negative_roe_penalised(self):
-        buy_bad = score_ml_meaningfully(
+        buy_bad = score_ml_intelligently(
             {"signal": "BUY", "confidence": 70},
             {"roe": -0.10},
+            {},
         )
-        buy_good = score_ml_meaningfully(
+        buy_good = score_ml_intelligently(
             {"signal": "BUY", "confidence": 70},
             {"roe": 0.0},
+            {},
         )
         assert buy_bad < buy_good
 
-    def test_sell_with_strong_roe_softened(self):
-        sell_strong = score_ml_meaningfully(
+    def test_sell_with_strong_fundamentals_softened(self):
+        sell_strong = score_ml_intelligently(
             {"signal": "SELL", "confidence": 70},
-            {"roe": 0.25},
+            {"roe": 0.25, "operating_margin": 0.25},
+            {},
         )
-        sell_weak = score_ml_meaningfully(
+        sell_weak = score_ml_intelligently(
             {"signal": "SELL", "confidence": 70},
             {"roe": 0.0},
+            {},
         )
         assert sell_strong > sell_weak
 
     def test_neutral_hold_near_5(self):
-        score = score_ml_meaningfully({"signal": "HOLD", "confidence": 50}, {})
+        score = score_ml_intelligently({"signal": "HOLD", "confidence": 50}, {}, {})
         assert 4.0 <= score <= 6.0
 
+    def test_oversold_rsi_bonus_for_buy(self):
+        buy_oversold = score_ml_intelligently(
+            {"signal": "BUY", "confidence": 70},
+            {},
+            {"rsi_14": 25},
+        )
+        buy_neutral_rsi = score_ml_intelligently(
+            {"signal": "BUY", "confidence": 70},
+            {},
+            {"rsi_14": 50},
+        )
+        assert buy_oversold > buy_neutral_rsi
+
+    def test_overbought_rsi_penalty_for_buy(self):
+        buy_overbought = score_ml_intelligently(
+            {"signal": "BUY", "confidence": 70},
+            {},
+            {"rsi_14": 75},
+        )
+        buy_neutral_rsi = score_ml_intelligently(
+            {"signal": "BUY", "confidence": 70},
+            {},
+            {"rsi_14": 50},
+        )
+        assert buy_overbought < buy_neutral_rsi
+
+    def test_uptrend_confirms_buy(self):
+        buy_uptrend = score_ml_intelligently(
+            {"signal": "BUY", "confidence": 70},
+            {},
+            {"price_vs_sma200": 0.10},
+        )
+        buy_downtrend = score_ml_intelligently(
+            {"signal": "BUY", "confidence": 70},
+            {},
+            {"price_vs_sma200": -0.15},
+        )
+        assert buy_uptrend > buy_downtrend
+
     def test_clamped(self):
-        assert score_ml_meaningfully(
+        assert score_ml_intelligently(
             {"signal": "BUY", "confidence": 100,
              "model_votes": {"a": "BUY", "b": "BUY"}},
-            {"roe": 0.50},
+            {"roe": 0.50, "operating_margin": 0.50},
+            {"rsi_14": 25, "price_vs_sma200": 0.20},
         ) <= 10.0
 
-        assert score_ml_meaningfully(
+        assert score_ml_intelligently(
             {"signal": "SELL", "confidence": 100,
              "model_votes": {"a": "SELL", "b": "SELL"}},
             {"roe": -0.50},
+            {"rsi_14": 80},
         ) >= 0.0
 
 
