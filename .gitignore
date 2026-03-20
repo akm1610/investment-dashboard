@@ -1,24 +1,9 @@
-<<<<<<< copilot/build-investment-dashboard
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-.Python
-*.egg-info/
-dist/
-build/
-.env
-.venv
-venv/
-*.egg
-.pytest_cache/
-.mypy_cache/
-portfolio.json
-=======
 # Byte-compiled / optimised / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyo
+*.pyd
 
 # Distribution / packaging
 .Python
@@ -94,4 +79,14 @@ Thumbs.db
 # Application-specific cache
 *.cache
 cache/
->>>>>>> main
+.mypy_cache/
+
+# Portfolio data
+portfolio.json
+
+# React dashboard build artifacts
+dashboard/node_modules/
+dashboard/dist/
+
+# Service logs and PID files
+logs/
