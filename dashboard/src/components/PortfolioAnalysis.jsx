@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { fetchPortfolio } from '../services/api';
+import { fetchPortfolio, exportPortfolioCSV } from '../services/api';
 import { SignalBadge, Spinner, ErrorMessage } from './shared';
 
 const DEFAULT_TICKERS = 'AAPL,MSFT,GOOGL,NVDA';
@@ -10,11 +10,15 @@ export default function PortfolioAnalysis() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  async function analyse() {
-    const tickers = input
+  function parsedTickers() {
+    return input
       .split(/[,\s]+/)
       .map((t) => t.trim().toUpperCase())
       .filter(Boolean);
+  }
+
+  async function analyse() {
+    const tickers = parsedTickers();
 
     if (tickers.length === 0) {
       setError('Enter at least one ticker.');
@@ -35,6 +39,15 @@ export default function PortfolioAnalysis() {
     }
   }
 
+  function handleExport() {
+    const tickers = parsedTickers();
+    if (tickers.length === 0) {
+      setError('Enter at least one ticker to export.');
+      return;
+    }
+    exportPortfolioCSV(tickers);
+  }
+
   return (
     <div className="section">
       <h2>Portfolio Analysis</h2>
@@ -52,6 +65,9 @@ export default function PortfolioAnalysis() {
         />
         <button className="btn-primary" onClick={analyse} disabled={loading}>
           {loading ? 'Analysing…' : 'Analyse Portfolio'}
+        </button>
+        <button className="btn-secondary" onClick={handleExport} disabled={loading} title="Export results as CSV">
+          ⬇ Export CSV
         </button>
       </div>
 

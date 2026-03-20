@@ -92,6 +92,20 @@ body {
 .btn-primary:hover:not(:disabled) { background: #1d4ed8; }
 .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
 
+.btn-secondary {
+  background: #fff;
+  color: #2563eb;
+  border: 1.5px solid #2563eb;
+  border-radius: 8px;
+  padding: 0.6rem 1.25rem;
+  font-size: 0.95rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.2s, color 0.2s;
+}
+.btn-secondary:hover:not(:disabled) { background: #eff6ff; }
+.btn-secondary:disabled { opacity: 0.6; cursor: not-allowed; }
+
 /* ===== Quick tickers ===== */
 .quick-tickers { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1.25rem; }
 .chip {

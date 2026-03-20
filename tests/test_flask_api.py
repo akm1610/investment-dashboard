@@ -9,8 +9,12 @@ Strategy
   network access or trained model files.
 * Tests cover:
   - /health endpoint returns 200 with status field
+  - /metrics endpoint returns uptime, request_counts, error_counts
   - /predict/<ticker> happy path and validation error paths
+  - /sentiment/<ticker> happy path and validation error paths
   - /portfolio endpoint happy path and error handling
+  - /portfolio/export CSV download endpoint
+  - Security headers are present on responses
 """
 
 from __future__ import annotations
@@ -274,6 +278,108 @@ class TestPortfolioOptimizeEndpoint:
         assert resp.status_code == 400
 
 
+# ---------------------------------------------------------------------------
+# /metrics
+# ---------------------------------------------------------------------------
+
+
+class TestMetricsEndpoint:
+    def test_returns_200(self, client):
+        resp = client.get("/metrics")
+        assert resp.status_code == 200
+
+    def test_response_contains_required_fields(self, client):
+        data = client.get("/metrics").get_json()
+        assert "uptime_seconds" in data
+        assert "request_counts" in data
+        assert "error_counts" in data
+        assert "timestamp" in data
+
+    def test_uptime_is_non_negative(self, client):
+        data = client.get("/metrics").get_json()
+        assert data["uptime_seconds"] >= 0
+
+
+# ---------------------------------------------------------------------------
+# /sentiment/<ticker>
+# ---------------------------------------------------------------------------
+
+
+class TestSentimentEndpoint:
+    def test_valid_ticker_returns_200(self, client, monkeypatch):
+        import flask_api as api_module
+        monkeypatch.setattr(
+            "flask_api.score_sentiment",
+            lambda ticker: 6.5,
+        )
+        resp = client.get("/sentiment/AAPL")
+        assert resp.status_code == 200
+
+    def test_response_contains_required_fields(self, client, monkeypatch):
+        import flask_api as api_module
+        monkeypatch.setattr("flask_api.score_sentiment", lambda ticker: 7.0)
+        data = client.get("/sentiment/MSFT").get_json()
+        assert data["ticker"] == "MSFT"
+        assert "sentiment_score" in data
+        assert "timestamp" in data
+
+    def test_numeric_ticker_returns_400(self, client):
+        resp = client.get("/sentiment/123")
+        assert resp.status_code == 400
+
+    def test_sentiment_score_range(self, client, monkeypatch):
+        monkeypatch.setattr("flask_api.score_sentiment", lambda ticker: 8.2)
+        data = client.get("/sentiment/NVDA").get_json()
+        assert 0.0 <= data["sentiment_score"] <= 10.0
+
+
+# ---------------------------------------------------------------------------
+# /portfolio/export
+# ---------------------------------------------------------------------------
+
+
+class TestPortfolioExportEndpoint:
+    def test_valid_tickers_returns_csv(self, client):
+        resp = client.get("/portfolio/export?tickers=AAPL,MSFT")
+        assert resp.status_code == 200
+        assert "text/csv" in resp.content_type
+
+    def test_csv_has_header_row(self, client):
+        resp = client.get("/portfolio/export?tickers=AAPL")
+        lines = resp.data.decode("utf-8").strip().splitlines()
+        assert lines[0].startswith("ticker,")
+
+    def test_csv_contains_ticker_row(self, client):
+        resp = client.get("/portfolio/export?tickers=AAPL")
+        content = resp.data.decode("utf-8")
+        assert "AAPL" in content
+
+    def test_missing_tickers_returns_400(self, client):
+        resp = client.get("/portfolio/export")
+        assert resp.status_code == 400
+
+    def test_content_disposition_is_attachment(self, client):
+        resp = client.get("/portfolio/export?tickers=AAPL")
+        assert "attachment" in resp.headers.get("Content-Disposition", "")
+
+
+# ---------------------------------------------------------------------------
+# Security headers
+# ---------------------------------------------------------------------------
+
+
+class TestSecurityHeaders:
+    def test_x_content_type_options(self, client):
+        resp = client.get("/health")
+        assert resp.headers.get("X-Content-Type-Options") == "nosniff"
+
+    def test_x_frame_options(self, client):
+        resp = client.get("/health")
+        assert resp.headers.get("X-Frame-Options") == "DENY"
+
+    def test_x_xss_protection(self, client):
+        resp = client.get("/health")
+        assert resp.headers.get("X-XSS-Protection") == "1; mode=block"
 
 
 

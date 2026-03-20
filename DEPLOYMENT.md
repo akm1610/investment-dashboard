@@ -11,10 +11,12 @@
 2. [Prerequisites](#prerequisites)
 3. [Quick Start (Automated)](#quick-start-automated)
 4. [Manual Setup](#manual-setup)
-5. [Verification Commands](#verification-commands)
-6. [API Reference](#api-reference)
-7. [Troubleshooting](#troubleshooting)
-8. [Production Deployment](#production-deployment)
+5. [Environment Variables](#environment-variables)
+6. [Verification Commands](#verification-commands)
+7. [API Reference](#api-reference)
+8. [Troubleshooting](#troubleshooting)
+9. [Docker Deployment](#docker-deployment)
+10. [Production Deployment](#production-deployment)
 
 ---
 
@@ -153,6 +155,22 @@ You should see:
 ```
 
 Open `http://localhost:3000` in your browser.
+
+---
+
+## Environment Variables
+
+Copy `.env.example` to `.env` and adjust values as needed:
+
+```bash
+cp .env.example .env
+```
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `API_PORT` | `9000` | Port the Flask REST API listens on |
+| `DASHBOARD_PORT` | `3000` | Port the React dev server listens on |
+| `NEWS_API_KEY` | _(empty)_ | Optional [NewsAPI](https://newsapi.org) key for richer sentiment data |
 
 ---
 
@@ -429,7 +447,49 @@ python3 -m pytest tests/ -v -k "not integration"
 
 ---
 
+## Docker Deployment
+
+Docker Compose starts both the Flask API and the React dashboard in isolated containers.
+
+### Prerequisites
+
+- [Docker](https://docs.docker.com/get-docker/) 24+
+- [Docker Compose](https://docs.docker.com/compose/install/) v2+
+
+### Quick start
+
+```bash
+# (Optional) create a .env file from the template
+cp .env.example .env
+
+# Build images and start both services in the background
+docker compose up --build -d
+```
+
+Services will be available at:
+
+| Service | URL |
+|---------|-----|
+| Flask API | `http://localhost:9000` |
+| React Dashboard | `http://localhost:3000` |
+
+### Useful commands
+
+```bash
+# View live logs
+docker compose logs -f
+
+# Stop and remove containers
+docker compose down
+
+# Rebuild after code changes
+docker compose up --build -d
+```
+
+---
+
 ## Production Deployment
+
 
 ### Environment variables
 

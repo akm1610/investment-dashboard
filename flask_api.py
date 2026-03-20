@@ -12,16 +12,23 @@ The port can be overridden via the ``API_PORT`` environment variable.
 Endpoints
 ---------
 GET  /health                   – Liveness check
+GET  /metrics                  – Server uptime, request counts, and error counts
 GET  /predict/<ticker>         – Single-stock prediction and score
+GET  /sentiment/<ticker>       – Sentiment score and recent headline summary
 POST /portfolio                – Portfolio analysis for a list of tickers
 POST /portfolio/optimize       – Score-weighted portfolio optimisation
+GET  /portfolio/export         – Export a list of tickers as a CSV file
 """
 
 from __future__ import annotations
 
+import csv
+import io
 import logging
 import os
 import sys
+import time
+from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
 
@@ -34,7 +41,7 @@ for _path in [_HERE, _SRC]:
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, make_response
 from flask_cors import CORS
 
 from src.config import API_PORT
@@ -56,9 +63,36 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 CORS(app)  # allow cross-origin requests from the dashboard on port 3000
 
+# ---------------------------------------------------------------------------
+# Metrics tracking
+# ---------------------------------------------------------------------------
+_start_time: float = time.time()
+_request_counts: dict[str, int] = defaultdict(int)
+_error_counts: dict[str, int] = defaultdict(int)
+
 # Lazily initialised to avoid slow startup when running tests
 _engine: RecommendationEngine | None = None
 _feature_engineer: FeatureEngineer | None = None
+
+
+# ---------------------------------------------------------------------------
+# Security headers + metrics instrumentation
+# ---------------------------------------------------------------------------
+
+@app.before_request
+def _count_request() -> None:
+    """Increment per-endpoint request counter."""
+    _request_counts[request.endpoint or "unknown"] += 1
+
+
+@app.after_request
+def _add_security_headers(response):  # type: ignore[no-untyped-def]
+    """Attach security headers to every response."""
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
 
 
 def _get_engine() -> tuple[RecommendationEngine, FeatureEngineer]:
@@ -154,6 +188,48 @@ def health() -> Any:
     )
 
 
+@app.get("/metrics")
+def metrics() -> Any:
+    """Server uptime, per-endpoint request counts, and error counts."""
+    uptime_seconds = round(time.time() - _start_time, 1)
+    return jsonify(
+        {
+            "uptime_seconds": uptime_seconds,
+            "request_counts": dict(_request_counts),
+            "error_counts": dict(_error_counts),
+            "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+        }
+    )
+
+
+@app.get("/sentiment/<ticker>")
+def sentiment(ticker: str) -> Any:
+    """Return the sentiment score and component breakdown for *ticker*.
+
+    Response body (JSON):
+        {
+          "ticker": "AAPL",
+          "sentiment_score": 6.8,   # 0–10 scale
+          "timestamp": "…"
+        }
+    """
+    ticker = ticker.upper().strip()
+    if not ticker or not ticker.isalpha():
+        return jsonify({"error": "Invalid ticker symbol"}), 400
+    try:
+        sent_score = score_sentiment(ticker)
+        return jsonify(
+            {
+                "ticker": ticker,
+                "sentiment_score": round(sent_score, 2),
+                "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+            }
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Error fetching sentiment for %s", ticker)
+        _error_counts["sentiment"] += 1
+        return jsonify({"error": str(exc), "ticker": ticker}), 500
+
 @app.get("/predict/<ticker>")
 def predict(ticker: str) -> Any:
     """Return a prediction and composite score for a single *ticker*."""
@@ -165,6 +241,7 @@ def predict(ticker: str) -> Any:
         return jsonify(result)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Error predicting %s", ticker)
+        _error_counts["predict"] += 1
         return jsonify({"error": str(exc), "ticker": ticker}), 500
 
 
@@ -201,6 +278,7 @@ def portfolio() -> Any:
             results.append(_build_prediction(ticker))
         except Exception as exc:  # noqa: BLE001
             logger.exception("Error predicting %s", ticker)
+            _error_counts["portfolio"] += 1
             errors.append({"ticker": ticker, "error": str(exc)})
 
     results.sort(key=lambda r: r["scores"]["total"], reverse=True)
@@ -286,6 +364,69 @@ def portfolio_optimize() -> Any:
     )
 
 
+@app.get("/portfolio/export")
+def portfolio_export() -> Any:
+    """Export predictions for a list of tickers as a CSV file.
+
+    Query parameters:
+        tickers – comma-separated list of ticker symbols, e.g. ``AAPL,MSFT,NVDA``
+
+    Response:
+        CSV file attachment (``portfolio_export.csv``).
+    """
+    raw = request.args.get("tickers", "")
+    tickers = [t.strip().upper() for t in raw.split(",") if t.strip()]
+
+    if not tickers:
+        return jsonify({"error": "Provide a 'tickers' query parameter, e.g. ?tickers=AAPL,MSFT"}), 400
+
+    predictions: list[dict] = []
+    errors: list[dict] = []
+
+    for ticker in tickers:
+        if not ticker.isalpha():
+            errors.append({"ticker": ticker, "error": "Invalid ticker symbol"})
+            continue
+        try:
+            predictions.append(_build_prediction(ticker))
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Error predicting %s for export", ticker)
+            _error_counts["portfolio_export"] += 1
+            errors.append({"ticker": ticker, "error": str(exc)})
+
+    # Build CSV
+    output = io.StringIO()
+    fieldnames = [
+        "ticker", "price", "signal", "confidence",
+        "score_total", "score_fundamentals", "score_technicals",
+        "score_risk", "score_ml", "score_sentiment", "score_etf",
+        "timestamp",
+    ]
+    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    writer.writeheader()
+    for pred in predictions:
+        writer.writerow(
+            {
+                "ticker": pred["ticker"],
+                "price": pred["price"],
+                "signal": pred["signal"],
+                "confidence": pred["confidence"],
+                "score_total": pred["scores"]["total"],
+                "score_fundamentals": pred["scores"]["fundamentals"],
+                "score_technicals": pred["scores"]["technicals"],
+                "score_risk": pred["scores"]["risk"],
+                "score_ml": pred["scores"]["ml"],
+                "score_sentiment": pred["scores"]["sentiment"],
+                "score_etf": pred["scores"]["etf"],
+                "timestamp": pred["timestamp"],
+            }
+        )
+
+    csv_bytes = output.getvalue().encode("utf-8")
+    response = make_response(csv_bytes)
+    response.headers["Content-Type"] = "text/csv; charset=utf-8"
+    response.headers["Content-Disposition"] = "attachment; filename=portfolio_export.csv"
+    return response
 
 
 if __name__ == "__main__":
