@@ -569,6 +569,195 @@ class DataFetcher:
         _cache_set(cache_key, ratios)
         return ratios
 
+    def fetch_all_fundamentals(self, ticker: Optional[str] = None) -> Dict[str, Any]:
+        """Return a flat fundamentals dict suitable for the scoring engine.
+
+        Keys returned
+        -------------
+        roe, gross_margin, operating_margin, pe_ratio, earnings_growth,
+        debt_to_equity, current_ratio.  All values are ``float`` or ``None``.
+
+        Parameters
+        ----------
+        ticker:
+            Ignored; present for API compatibility when callers pass the
+            ticker symbol explicitly.
+
+        Returns
+        -------
+        dict
+        """
+        ratios = self.calculate_basic_ratios()
+        info = self.fetch_company_info()
+
+        earnings_growth: Optional[float] = None
+        for key in ("earningsGrowth", "earningsQuarterlyGrowth", "revenueGrowth"):
+            val = info.get(key)
+            try:
+                if val is not None:
+                    earnings_growth = float(val)
+                    break
+            except (TypeError, ValueError):
+                pass
+
+        return {
+            "roe": ratios.get("roe"),
+            "gross_margin": ratios.get("gross_margin"),
+            "operating_margin": ratios.get("operating_margin"),
+            "pe_ratio": ratios.get("pe_ratio"),
+            "earnings_growth": earnings_growth,
+            "debt_to_equity": ratios.get("debt_to_equity"),
+            "current_ratio": ratios.get("current_ratio"),
+        }
+
+    def calculate_technical_indicators(
+        self, price_data: pd.DataFrame
+    ) -> Dict[str, Optional[float]]:
+        """Compute technical indicators from OHLCV *price_data*.
+
+        Returns a dict with the scalar values of the most recent bar:
+
+        rsi_14, macd, macd_hist, price_vs_sma200, volume_ratio.
+
+        Missing or insufficient data is returned as ``None``.
+
+        Parameters
+        ----------
+        price_data:
+            OHLCV DataFrame with at least a ``Close`` column and optionally
+            a ``Volume`` column.
+
+        Returns
+        -------
+        dict
+        """
+        if price_data is None or price_data.empty:
+            return {
+                "rsi_14": None,
+                "macd": None,
+                "macd_hist": None,
+                "price_vs_sma200": None,
+                "volume_ratio": None,
+            }
+
+        close = price_data["Close"].dropna()
+
+        def _last(series: pd.Series) -> Optional[float]:
+            if series.empty:
+                return None
+            val = series.iloc[-1]
+            try:
+                return float(val) if not pd.isna(val) else None
+            except (TypeError, ValueError):
+                return None
+
+        # RSI-14
+        rsi_14: Optional[float] = None
+        if len(close) >= 15:
+            delta = close.diff()
+            gain = delta.clip(lower=0).rolling(window=14, min_periods=14).mean()
+            loss = (-delta.clip(upper=0)).rolling(window=14, min_periods=14).mean()
+            rs = gain / loss.replace(0, float("nan"))
+            rsi_series = 100 - (100 / (1 + rs))
+            rsi_14 = _last(rsi_series)
+
+        # MACD (12/26/9)
+        macd_val: Optional[float] = None
+        macd_hist_val: Optional[float] = None
+        if len(close) >= 27:
+            ema12 = close.ewm(span=12, adjust=False).mean()
+            ema26 = close.ewm(span=26, adjust=False).mean()
+            macd_line = ema12 - ema26
+            signal_line = macd_line.ewm(span=9, adjust=False).mean()
+            macd_val = _last(macd_line)
+            macd_hist_val = _last(macd_line - signal_line)
+
+        # Price vs 200-day SMA
+        price_vs_sma200: Optional[float] = None
+        if len(close) >= 200:
+            sma200 = close.rolling(window=200, min_periods=200).mean()
+            last_sma200 = _last(sma200)
+            last_price = _last(close)
+            if last_sma200 and last_price and last_sma200 != 0:
+                price_vs_sma200 = (last_price / last_sma200) - 1.0
+
+        # Volume ratio (latest / 20-day average)
+        volume_ratio: Optional[float] = None
+        if "Volume" in price_data.columns:
+            volume = price_data["Volume"].dropna()
+            if len(volume) >= 20:
+                vol_ma20 = volume.rolling(window=20, min_periods=20).mean()
+                last_vol = _last(volume)
+                last_ma = _last(vol_ma20)
+                if last_ma and last_ma != 0 and last_vol is not None:
+                    volume_ratio = last_vol / last_ma
+
+        return {
+            "rsi_14": rsi_14,
+            "macd": macd_val,
+            "macd_hist": macd_hist_val,
+            "price_vs_sma200": price_vs_sma200,
+            "volume_ratio": volume_ratio,
+        }
+
+    def calculate_risk_metrics(
+        self, price_data: pd.DataFrame
+    ) -> Dict[str, Optional[float]]:
+        """Compute risk metrics from OHLCV *price_data*.
+
+        Returns a dict with:
+
+        volatility   – annualised standard deviation of daily simple returns.
+        sharpe_ratio – annualised Sharpe ratio (assuming 0 % risk-free rate).
+        max_drawdown – maximum peak-to-trough drawdown (negative float).
+
+        Parameters
+        ----------
+        price_data:
+            OHLCV DataFrame with at least a ``Close`` column.
+
+        Returns
+        -------
+        dict
+        """
+        if price_data is None or price_data.empty:
+            return {
+                "volatility": None,
+                "sharpe_ratio": None,
+                "max_drawdown": None,
+            }
+
+        close = price_data["Close"].dropna()
+
+        # Annualised volatility
+        volatility: Optional[float] = None
+        sharpe_ratio: Optional[float] = None
+        if len(close) >= 2:
+            log_returns = close.pct_change().dropna()
+            if not log_returns.empty:
+                vol = float(log_returns.std()) * (252 ** 0.5)
+                volatility = vol
+                mean_return = float(log_returns.mean()) * 252
+                if vol and vol != 0:
+                    sharpe_ratio = mean_return / vol
+
+        # Maximum drawdown
+        max_drawdown: Optional[float] = None
+        if len(close) >= 2:
+            rolling_max = close.cummax()
+            drawdown = (close - rolling_max) / rolling_max.replace(0, float("nan"))
+            dd_min = drawdown.min()
+            try:
+                max_drawdown = float(dd_min) if not pd.isna(dd_min) else None
+            except (TypeError, ValueError):
+                max_drawdown = None
+
+        return {
+            "volatility": volatility,
+            "sharpe_ratio": sharpe_ratio,
+            "max_drawdown": max_drawdown,
+        }
+
 
 # ---------------------------------------------------------------------------
 # Small utility used by calculate_basic_ratios
