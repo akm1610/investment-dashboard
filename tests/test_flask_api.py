@@ -307,7 +307,6 @@ class TestMetricsEndpoint:
 
 class TestSentimentEndpoint:
     def test_valid_ticker_returns_200(self, client, monkeypatch):
-        import flask_api as api_module
         monkeypatch.setattr(
             "flask_api.score_sentiment",
             lambda ticker: 6.5,
@@ -316,7 +315,6 @@ class TestSentimentEndpoint:
         assert resp.status_code == 200
 
     def test_response_contains_required_fields(self, client, monkeypatch):
-        import flask_api as api_module
         monkeypatch.setattr("flask_api.score_sentiment", lambda ticker: 7.0)
         data = client.get("/sentiment/MSFT").get_json()
         assert data["ticker"] == "MSFT"

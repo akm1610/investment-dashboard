@@ -170,6 +170,7 @@ cp .env.example .env
 |----------|---------|-------------|
 | `API_PORT` | `9000` | Port the Flask REST API listens on |
 | `DASHBOARD_PORT` | `3000` | Port the React dev server listens on |
+| `PROXY_TARGET` | `http://localhost:9000` | URL the Vite proxy forwards `/api` requests to (use `http://api:9000` in Docker Compose) |
 | `NEWS_API_KEY` | _(empty)_ | Optional [NewsAPI](https://newsapi.org) key for richer sentiment data |
 
 ---

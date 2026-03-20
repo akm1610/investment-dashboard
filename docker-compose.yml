@@ -31,7 +31,9 @@ services:
     ports:
       - "${DASHBOARD_PORT:-3000}:3000"
     environment:
-      - VITE_API_URL=http://api:9000
+      # Tells the Vite dev-server proxy where to find the Flask API
+      # (uses Docker's internal network hostname 'api')
+      - PROXY_TARGET=http://api:9000
     depends_on:
       api:
         condition: service_healthy

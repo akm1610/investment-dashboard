@@ -42,6 +42,7 @@ for _path in [_HERE, _SRC]:
         sys.path.insert(0, _path)
 
 from flask import Flask, jsonify, request, make_response
+from flask.wrappers import Response
 from flask_cors import CORS
 
 from src.config import API_PORT
@@ -86,7 +87,7 @@ def _count_request() -> None:
 
 
 @app.after_request
-def _add_security_headers(response):  # type: ignore[no-untyped-def]
+def _add_security_headers(response: Response) -> Response:
     """Attach security headers to every response."""
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
