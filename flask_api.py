@@ -12,16 +12,33 @@ The port can be overridden via the ``API_PORT`` environment variable.
 Endpoints
 ---------
 GET  /health                   – Liveness check
+GET  /metrics                  – Runtime metrics (uptime, request counts)
 GET  /predict/<ticker>         – Single-stock prediction and score
+GET  /sentiment/<ticker>       – News sentiment and recent headlines
 POST /portfolio                – Portfolio analysis for a list of tickers
 POST /portfolio/optimize       – Score-weighted portfolio optimisation
+GET  /portfolio/export         – Export portfolio results as CSV
+
+Authentication
+--------------
+When the ``API_KEY`` environment variable is set, every request must include
+the header ``X-API-Key: <value>``.  Requests without the correct key receive
+HTTP 401.  When ``API_KEY`` is not set authentication is disabled (dev mode).
+
+Rate Limiting
+-------------
+Requests are limited to 200/day and 60/minute per IP by default.
+Override via ``RATELIMIT_DEFAULT`` environment variable.
 """
 
 from __future__ import annotations
 
+import csv
+import io
 import logging
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -34,7 +51,7 @@ for _path in [_HERE, _SRC]:
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
-from flask import Flask, jsonify, request
+from flask import Flask, Response, jsonify, request
 from flask_cors import CORS
 
 from src.config import API_PORT
@@ -48,6 +65,7 @@ from src.scoring_engine import (
     score_sentiment,
     score_etf_exposure,
     stretch_distribution,
+    get_news_headlines,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s – %(message)s")
@@ -55,6 +73,73 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)  # allow cross-origin requests from the dashboard on port 3000
+
+# ---------------------------------------------------------------------------
+# Optional rate limiting
+# ---------------------------------------------------------------------------
+try:
+    from flask_limiter import Limiter
+    from flask_limiter.util import get_remote_address
+
+    _ratelimit_default = os.environ.get("RATELIMIT_DEFAULT", "200 per day;60 per minute")
+    limiter = Limiter(
+        key_func=get_remote_address,
+        app=app,
+        default_limits=[_ratelimit_default],
+        storage_uri="memory://",
+    )
+    _limiter_available = True
+except ImportError:  # pragma: no cover
+    limiter = None  # type: ignore[assignment]
+    _limiter_available = False
+
+# ---------------------------------------------------------------------------
+# Monitoring counters
+# ---------------------------------------------------------------------------
+_START_TIME: float = time.monotonic()
+_request_counts: dict[str, int] = {}
+_error_counts: dict[str, int] = {}
+
+
+@app.before_request
+def _track_request() -> None:
+    endpoint = request.endpoint or "unknown"
+    _request_counts[endpoint] = _request_counts.get(endpoint, 0) + 1
+
+
+# ---------------------------------------------------------------------------
+# Security headers
+# ---------------------------------------------------------------------------
+
+@app.after_request
+def _add_security_headers(response: Response) -> Response:
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    return response
+
+
+# ---------------------------------------------------------------------------
+# Optional API key authentication
+# ---------------------------------------------------------------------------
+
+_API_KEY: str = os.environ.get("API_KEY", "").strip()
+
+
+@app.before_request
+def _check_api_key() -> Response | None:
+    """Enforce API key auth when ``API_KEY`` env var is configured."""
+    if not _API_KEY:
+        return None  # auth disabled
+    # Skip auth for the health endpoint so load-balancers can probe it
+    if request.endpoint == "health":
+        return None
+    provided = request.headers.get("X-API-Key", "")
+    if provided != _API_KEY:
+        return jsonify({"error": "Unauthorized – missing or invalid X-API-Key header"}), 401
+    return None
+
 
 # Lazily initialised to avoid slow startup when running tests
 _engine: RecommendationEngine | None = None
@@ -139,6 +224,18 @@ def _build_prediction(ticker: str) -> dict[str, Any]:
     }
 
 
+def _validate_ticker(ticker: str) -> str | None:
+    """Return an error message string if the ticker is invalid, else None."""
+    cleaned = ticker.upper().strip()
+    if not cleaned:
+        return "Ticker symbol is required"
+    if not cleaned.replace(".", "").replace("-", "").isalpha():
+        return "Invalid ticker symbol – use letters only (e.g. AAPL, BRK.B)"
+    if len(cleaned) > 10:
+        return "Ticker symbol too long (max 10 characters)"
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -150,6 +247,20 @@ def health() -> Any:
         {
             "status": "healthy",
             "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+            "uptime_seconds": round(time.monotonic() - _START_TIME, 1),
+        }
+    )
+
+
+@app.get("/metrics")
+def metrics() -> Any:
+    """Runtime metrics: uptime, per-endpoint request/error counts."""
+    return jsonify(
+        {
+            "uptime_seconds": round(time.monotonic() - _START_TIME, 1),
+            "request_counts": dict(_request_counts),
+            "error_counts": dict(_error_counts),
+            "timestamp": datetime.now(tz=timezone.utc).isoformat(),
         }
     )
 
@@ -157,14 +268,61 @@ def health() -> Any:
 @app.get("/predict/<ticker>")
 def predict(ticker: str) -> Any:
     """Return a prediction and composite score for a single *ticker*."""
+    err = _validate_ticker(ticker)
+    if err:
+        return jsonify({"error": err}), 400
     ticker = ticker.upper().strip()
-    if not ticker or not ticker.isalpha():
-        return jsonify({"error": "Invalid ticker symbol"}), 400
     try:
         result = _build_prediction(ticker)
         return jsonify(result)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Error predicting %s", ticker)
+        _error_counts["predict"] = _error_counts.get("predict", 0) + 1
+        return jsonify({"error": str(exc), "ticker": ticker}), 500
+
+
+@app.get("/sentiment/<ticker>")
+def sentiment(ticker: str) -> Any:
+    """Return sentiment score and recent news headlines for *ticker*.
+
+    Response body (JSON)::
+
+        {
+          "ticker": "AAPL",
+          "sentiment_score": 6.5,
+          "news_api_active": false,
+          "headlines": [
+            {
+              "title": "Apple beats earnings…",
+              "url": "https://…",
+              "published_at": "2024-11-01T12:00:00Z",
+              "source": "Yahoo Finance",
+              "polarity": 0.5
+            }
+          ],
+          "timestamp": "…"
+        }
+    """
+    err = _validate_ticker(ticker)
+    if err:
+        return jsonify({"error": err}), 400
+    ticker = ticker.upper().strip()
+    try:
+        sent_score = score_sentiment(ticker)
+        headlines = get_news_headlines(ticker, max_articles=10)
+        news_api_active = bool(os.environ.get("NEWS_API_KEY", "").strip())
+        return jsonify(
+            {
+                "ticker": ticker,
+                "sentiment_score": round(sent_score, 2),
+                "news_api_active": news_api_active,
+                "headlines": headlines,
+                "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+            }
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Error fetching sentiment for %s", ticker)
+        _error_counts["sentiment"] = _error_counts.get("sentiment", 0) + 1
         return jsonify({"error": str(exc), "ticker": ticker}), 500
 
 
@@ -197,10 +355,14 @@ def portfolio() -> Any:
     errors: list[dict] = []
 
     for ticker in tickers:
+        if _validate_ticker(ticker):
+            errors.append({"ticker": ticker, "error": "Invalid ticker symbol"})
+            continue
         try:
             results.append(_build_prediction(ticker))
         except Exception as exc:  # noqa: BLE001
             logger.exception("Error predicting %s", ticker)
+            _error_counts["portfolio"] = _error_counts.get("portfolio", 0) + 1
             errors.append({"ticker": ticker, "error": str(exc)})
 
     results.sort(key=lambda r: r["scores"]["total"], reverse=True)
@@ -249,10 +411,14 @@ def portfolio_optimize() -> Any:
     errors: list[dict] = []
 
     for ticker in tickers:
+        if _validate_ticker(ticker):
+            errors.append({"ticker": ticker, "error": "Invalid ticker symbol"})
+            continue
         try:
             predictions.append(_build_prediction(ticker))
         except Exception as exc:  # noqa: BLE001
             logger.exception("Error predicting %s for optimisation", ticker)
+            _error_counts["portfolio_optimize"] = _error_counts.get("portfolio_optimize", 0) + 1
             errors.append({"ticker": ticker, "error": str(exc)})
 
     # Build score map; optionally exclude SELL signals
@@ -286,6 +452,72 @@ def portfolio_optimize() -> Any:
     )
 
 
+@app.get("/portfolio/export")
+def portfolio_export() -> Any:
+    """Export portfolio analysis results as a CSV file.
+
+    Query parameters:
+        tickers – comma-separated list of ticker symbols (e.g. ``?tickers=AAPL,MSFT``)
+
+    Returns a ``text/csv`` response with the analysis for each ticker,
+    or a JSON error if the ``tickers`` parameter is missing / empty.
+    """
+    raw = request.args.get("tickers", "")
+    tickers = [t.strip().upper() for t in raw.split(",") if t.strip()]
+
+    if not tickers:
+        return jsonify({"error": "Provide a 'tickers' query parameter (comma-separated)"}), 400
+
+    results: list[dict] = []
+    errors: list[dict] = []
+
+    for ticker in tickers:
+        if _validate_ticker(ticker):
+            errors.append({"ticker": ticker, "error": "Invalid ticker symbol"})
+            continue
+        try:
+            results.append(_build_prediction(ticker))
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Error building prediction for CSV export: %s", ticker)
+            errors.append({"ticker": ticker, "error": str(exc)})
+
+    results.sort(key=lambda r: r["scores"]["total"], reverse=True)
+
+    # Build CSV in memory
+    output = io.StringIO()
+    fieldnames = [
+        "ticker", "price", "signal", "confidence",
+        "score_total", "score_fundamentals", "score_technicals",
+        "score_risk", "score_ml", "score_sentiment", "score_etf",
+        "timestamp",
+    ]
+    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    writer.writeheader()
+    for r in results:
+        writer.writerow(
+            {
+                "ticker": r["ticker"],
+                "price": r["price"],
+                "signal": r["signal"],
+                "confidence": r["confidence"],
+                "score_total": r["scores"]["total"],
+                "score_fundamentals": r["scores"]["fundamentals"],
+                "score_technicals": r["scores"]["technicals"],
+                "score_risk": r["scores"]["risk"],
+                "score_ml": r["scores"]["ml"],
+                "score_sentiment": r["scores"]["sentiment"],
+                "score_etf": r["scores"]["etf"],
+                "timestamp": r["timestamp"],
+            }
+        )
+
+    csv_content = output.getvalue()
+    filename = f"portfolio_analysis_{datetime.now(tz=timezone.utc).strftime('%Y%m%d_%H%M%S')}.csv"
+    return Response(
+        csv_content,
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 if __name__ == "__main__":

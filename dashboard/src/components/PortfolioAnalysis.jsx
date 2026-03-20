@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { fetchPortfolio } from '../services/api';
+import { fetchPortfolio, exportPortfolioCsv } from '../services/api';
 import { SignalBadge, Spinner, ErrorMessage } from './shared';
 
 const DEFAULT_TICKERS = 'AAPL,MSFT,GOOGL,NVDA';
@@ -8,14 +8,18 @@ export default function PortfolioAnalysis() {
   const [input, setInput] = useState(DEFAULT_TICKERS);
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState(null);
 
-  async function analyse() {
-    const tickers = input
+  function parseTickers() {
+    return input
       .split(/[,\s]+/)
       .map((t) => t.trim().toUpperCase())
       .filter(Boolean);
+  }
 
+  async function analyse() {
+    const tickers = parseTickers();
     if (tickers.length === 0) {
       setError('Enter at least one ticker.');
       return;
@@ -32,6 +36,24 @@ export default function PortfolioAnalysis() {
       setError(err.message);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleExport() {
+    const tickers = result
+      ? result.results.map((r) => r.ticker)
+      : parseTickers();
+    if (tickers.length === 0) {
+      setError('Analyse a portfolio before exporting.');
+      return;
+    }
+    setExporting(true);
+    try {
+      await exportPortfolioCsv(tickers);
+    } catch (err) {
+      setError(`Export failed: ${err.message}`);
+    } finally {
+      setExporting(false);
     }
   }
 
@@ -52,6 +74,14 @@ export default function PortfolioAnalysis() {
         />
         <button className="btn-primary" onClick={analyse} disabled={loading}>
           {loading ? 'Analysing…' : 'Analyse Portfolio'}
+        </button>
+        <button
+          className="btn-secondary"
+          onClick={handleExport}
+          disabled={exporting || loading}
+          title="Download results as CSV"
+        >
+          {exporting ? 'Exporting…' : '⬇ CSV'}
         </button>
       </div>
 
@@ -113,6 +143,8 @@ function ResultsTable({ results }) {
             <th>Tech.</th>
             <th>Risk</th>
             <th>ML</th>
+            <th>Sent.</th>
+            <th>ETF</th>
             <th>Signal</th>
             <th>Conf.</th>
           </tr>
@@ -127,6 +159,8 @@ function ResultsTable({ results }) {
               <td>{r.scores.technicals.toFixed(1)}</td>
               <td>{r.scores.risk.toFixed(1)}</td>
               <td>{r.scores.ml.toFixed(1)}</td>
+              <td>{r.scores.sentiment.toFixed(1)}</td>
+              <td>{r.scores.etf.toFixed(1)}</td>
               <td><SignalBadge signal={r.signal} /></td>
               <td>{r.confidence}%</td>
             </tr>
@@ -136,3 +170,4 @@ function ResultsTable({ results }) {
     </div>
   );
 }
+

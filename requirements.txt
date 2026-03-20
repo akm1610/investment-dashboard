@@ -24,6 +24,9 @@ tensorflow>=2.13.0
 # Technical analysis
 ta>=0.10.2
 
+# Rate limiting
+flask-limiter>=3.5.0
+
 # Development / testing
 pytest>=8.0.0
 pytest-mock>=3.14.0

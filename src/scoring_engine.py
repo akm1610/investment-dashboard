@@ -602,45 +602,158 @@ def _get_analyst_rating(ticker: str) -> Optional[float]:
     return None
 
 
+_POSITIVE_WORDS: frozenset = frozenset({
+    "surge", "surges", "soar", "soars", "beat", "beats", "strong",
+    "growth", "record", "profit", "gain", "rally", "upgrade", "upgraded",
+    "bullish", "outperform", "exceed", "raised", "positive", "buy",
+    "opportunity", "innovative", "expansion", "robust", "solid",
+})
+_NEGATIVE_WORDS: frozenset = frozenset({
+    "fall", "falls", "drop", "drops", "miss", "misses", "weak", "loss",
+    "losses", "decline", "cut", "downgrade", "downgraded", "bearish",
+    "underperform", "concern", "lawsuit", "warning", "crash", "sell",
+    "risk", "volatile", "debt", "layoff", "layoffs", "recall", "fraud",
+})
+
+
+def _keyword_polarity(title: str) -> Optional[float]:
+    """Return a polarity score for a headline using keyword matching.
+
+    Returns a float in [-1, 1] if any sentiment keywords are found,
+    or None if no keywords match.
+    """
+    words = set(title.lower().split())
+    pos = len(words & _POSITIVE_WORDS)
+    neg = len(words & _NEGATIVE_WORDS)
+    if pos + neg > 0:
+        return (pos - neg) / (pos + neg)
+    return None
+
+
 def _get_news_sentiment(ticker: str) -> Optional[float]:
     """Return news sentiment score (-1 to +1) or None if unavailable.
 
-    Uses yfinance recent news headlines and applies a keyword-based polarity
-    score.  Positive words score +1, negative words score -1.  The final
-    value is the mean polarity clipped to [-1, +1].
+    If the ``NEWS_API_KEY`` environment variable is set, fetches live
+    headlines from NewsAPI (https://newsapi.org) and applies keyword-based
+    polarity scoring.  Falls back to yfinance news headlines when the key is
+    absent or the NewsAPI call fails.  The final value is the mean polarity
+    clipped to [-1, +1].
     """
-    _POSITIVE_WORDS = {
-        "surge", "surges", "soar", "soars", "beat", "beats", "strong",
-        "growth", "record", "profit", "gain", "rally", "upgrade", "upgraded",
-        "bullish", "outperform", "exceed", "raised", "positive", "buy",
-        "opportunity", "innovative", "expansion", "robust", "solid",
-    }
-    _NEGATIVE_WORDS = {
-        "fall", "falls", "drop", "drops", "miss", "misses", "weak", "loss",
-        "losses", "decline", "cut", "downgrade", "downgraded", "bearish",
-        "underperform", "concern", "lawsuit", "warning", "crash", "sell",
-        "risk", "volatile", "debt", "layoff", "layoffs", "recall", "fraud",
-    }
+    import os
+    import requests  # already a transitive dependency
 
-    try:
-        import yfinance as yf  # lazy import
+    headlines: list[str] = []
 
-        news = yf.Ticker(ticker).news or []
-        scores: list[float] = []
-        for article in news[:20]:  # cap at 20 recent articles
-            title = (article.get("title") or "").lower()
-            words = set(title.split())
-            pos = len(words & _POSITIVE_WORDS)
-            neg = len(words & _NEGATIVE_WORDS)
-            if pos + neg > 0:
-                scores.append((pos - neg) / (pos + neg))
+    news_api_key = os.environ.get("NEWS_API_KEY", "").strip()
+    if news_api_key:
+        try:
+            url = "https://newsapi.org/v2/everything"
+            params = {
+                "q": ticker,
+                "language": "en",
+                "sortBy": "publishedAt",
+                "pageSize": 20,
+                "apiKey": news_api_key,
+            }
+            resp = requests.get(url, params=params, timeout=5)
+            if resp.status_code == 200:
+                for article in resp.json().get("articles", []):
+                    title = article.get("title") or ""
+                    if title:
+                        headlines.append(title)
+        except Exception:  # noqa: BLE001
+            pass  # fall through to yfinance fallback
 
-        if scores:
-            mean_score = sum(scores) / len(scores)
-            return max(-1.0, min(1.0, mean_score))
-    except Exception:  # noqa: BLE001
-        pass
+    if not headlines:
+        try:
+            import yfinance as yf  # lazy import
+
+            news = yf.Ticker(ticker).news or []
+            for article in news[:20]:  # cap at 20 recent articles
+                title = article.get("title") or ""
+                # yfinance ≥ 0.2.50 wraps content in a nested dict
+                if not title and isinstance(article.get("content"), dict):
+                    title = article["content"].get("title") or ""
+                if title:
+                    headlines.append(title)
+        except Exception:  # noqa: BLE001
+            pass
+
+    scores: list[float] = []
+    for title in headlines:
+        polarity = _keyword_polarity(title)
+        if polarity is not None:
+            scores.append(polarity)
+
+    if scores:
+        mean_score = sum(scores) / len(scores)
+        return max(-1.0, min(1.0, mean_score))
     return None
+
+
+def get_news_headlines(ticker: str, max_articles: int = 10) -> list[dict]:
+    """Fetch recent news headlines for *ticker* and return sentiment details.
+
+    Returns a list of dicts with keys ``title``, ``url``, ``polarity``,
+    and ``source``.  Used by the ``/sentiment/<ticker>`` API endpoint.
+    Supports optional NewsAPI integration via the ``NEWS_API_KEY`` env var
+    and falls back to yfinance headlines.
+    """
+    import os
+    import requests
+
+    articles: list[dict] = []
+
+    news_api_key = os.environ.get("NEWS_API_KEY", "").strip()
+    if news_api_key:
+        try:
+            url = "https://newsapi.org/v2/everything"
+            params = {
+                "q": ticker,
+                "language": "en",
+                "sortBy": "publishedAt",
+                "pageSize": max_articles,
+                "apiKey": news_api_key,
+            }
+            resp = requests.get(url, params=params, timeout=5)
+            if resp.status_code == 200:
+                for item in resp.json().get("articles", []):
+                    title = item.get("title") or ""
+                    if title:
+                        articles.append({
+                            "title": title,
+                            "url": item.get("url") or "",
+                            "published_at": item.get("publishedAt") or "",
+                            "source": (item.get("source") or {}).get("name") or "NewsAPI",
+                            "polarity": _keyword_polarity(title),
+                        })
+        except Exception:  # noqa: BLE001
+            pass
+
+    if not articles:
+        try:
+            import yfinance as yf
+
+            news = yf.Ticker(ticker).news or []
+            for item in news[:max_articles]:
+                title = item.get("title") or ""
+                if not title and isinstance(item.get("content"), dict):
+                    title = item["content"].get("title") or ""
+                link = item.get("link") or item.get("url") or ""
+                if not link and isinstance(item.get("content"), dict):
+                    link = item["content"].get("canonicalUrl", {}).get("url") or ""
+                if title:
+                    articles.append({
+                        "title": title,
+                        "url": link,
+                        "published_at": "",
+                        "source": "Yahoo Finance",
+                        "polarity": _keyword_polarity(title),
+                    })
+        except Exception:  # noqa: BLE001
+            pass
+
+    return articles
 
 
 def _get_insider_activity(ticker: str) -> Optional[float]:

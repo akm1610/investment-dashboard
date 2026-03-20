@@ -2,10 +2,11 @@ import { useState } from 'react';
 import StockSearch from './components/StockSearch';
 import PortfolioAnalysis from './components/PortfolioAnalysis';
 import PortfolioOptimizer from './components/PortfolioOptimizer';
+import MetricsDashboard from './components/MetricsDashboard';
 import ApiStatus from './components/ApiStatus';
 import './App.css';
 
-const TABS = ['Search', 'Portfolio', 'Optimizer'];
+const TABS = ['Search', 'Portfolio', 'Optimizer', 'Metrics'];
 
 function App() {
   const [activeTab, setActiveTab] = useState('Search');
@@ -33,6 +34,7 @@ function App() {
             {tab === 'Search' && '🔍 '}
             {tab === 'Portfolio' && '📊 '}
             {tab === 'Optimizer' && '⚙️ '}
+            {tab === 'Metrics' && '📡 '}
             {tab}
           </button>
         ))}
@@ -42,6 +44,7 @@ function App() {
         {activeTab === 'Search' && <StockSearch />}
         {activeTab === 'Portfolio' && <PortfolioAnalysis />}
         {activeTab === 'Optimizer' && <PortfolioOptimizer />}
+        {activeTab === 'Metrics' && <MetricsDashboard />}
       </main>
 
       <footer className="app-footer">
@@ -52,3 +55,4 @@ function App() {
 }
 
 export default App;
+

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { fetchPrediction } from '../services/api';
+import { fetchPrediction, fetchSentiment } from '../services/api';
 import { ScoreBar, SignalBadge, Spinner, ErrorMessage } from './shared';
 
 const QUICK_TICKERS = ['AAPL', 'MSFT', 'GOOGL', 'NVDA', 'TSLA', 'AMZN', 'META', 'INTC'];
@@ -7,6 +7,7 @@ const QUICK_TICKERS = ['AAPL', 'MSFT', 'GOOGL', 'NVDA', 'TSLA', 'AMZN', 'META', 
 export default function StockSearch() {
   const [ticker, setTicker] = useState('');
   const [result, setResult] = useState(null);
+  const [sentiment, setSentiment] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
@@ -16,9 +17,16 @@ export default function StockSearch() {
     setLoading(true);
     setError(null);
     setResult(null);
+    setSentiment(null);
     try {
-      const data = await fetchPrediction(symbol);
-      setResult(data);
+      // Fetch prediction and sentiment in parallel
+      const [predData, sentData] = await Promise.allSettled([
+        fetchPrediction(symbol),
+        fetchSentiment(symbol),
+      ]);
+      if (predData.status === 'fulfilled') setResult(predData.value);
+      else throw new Error(predData.reason?.message || 'Prediction failed');
+      if (sentData.status === 'fulfilled') setSentiment(sentData.value);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -63,6 +71,9 @@ export default function StockSearch() {
       {error && <ErrorMessage message={error} />}
       {loading && <Spinner />}
       {result && <PredictionCard data={result} />}
+      {sentiment && sentiment.headlines && sentiment.headlines.length > 0 && (
+        <NewsPanel data={sentiment} />
+      )}
     </div>
   );
 }
@@ -108,3 +119,46 @@ function PredictionCard({ data }) {
     </div>
   );
 }
+
+function NewsPanel({ data }) {
+  const { ticker, sentiment_score, news_api_active, headlines } = data;
+  const source = news_api_active ? 'NewsAPI' : 'Yahoo Finance';
+
+  return (
+    <div className="card news-panel">
+      <div className="news-header">
+        <h3>📰 Recent News – {ticker}</h3>
+        <div className="news-meta">
+          <span className="news-source-badge">{source}</span>
+          <span className="news-sentiment-badge" style={{
+            color: sentiment_score >= 6 ? '#15803d' : sentiment_score >= 4 ? '#854d0e' : '#991b1b'
+          }}>
+            Sentiment: {sentiment_score.toFixed(1)} / 10
+          </span>
+        </div>
+      </div>
+      <ul className="news-list">
+        {headlines.map((item, i) => (
+          <li key={i} className="news-item">
+            <span className={`polarity-dot ${
+              item.polarity === null ? 'neutral' : item.polarity > 0 ? 'positive' : item.polarity < 0 ? 'negative' : 'neutral'
+            }`} title={
+              item.polarity === null ? 'Neutral' : item.polarity > 0 ? 'Positive' : 'Negative'
+            } />
+            {item.url ? (
+              <a href={item.url} target="_blank" rel="noopener noreferrer" className="news-title">
+                {item.title}
+              </a>
+            ) : (
+              <span className="news-title">{item.title}</span>
+            )}
+            {item.source && item.source !== source && (
+              <span className="news-article-source"> — {item.source}</span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
