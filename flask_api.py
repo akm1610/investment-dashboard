@@ -6,14 +6,15 @@ Lightweight Flask REST API for the investment dashboard.
 Run with:
     python flask_api.py
 
-The server starts on port 8001 (port 8000 may already be in use on the host).
+The server starts on port 9000 by default.
 The port can be overridden via the ``API_PORT`` environment variable.
 
 Endpoints
 ---------
-GET  /health               – Liveness check
-GET  /predict/<ticker>     – Single-stock prediction and score
-POST /portfolio            – Portfolio analysis for a list of tickers
+GET  /health                   – Liveness check
+GET  /predict/<ticker>         – Single-stock prediction and score
+POST /portfolio                – Portfolio analysis for a list of tickers
+POST /portfolio/optimize       – Score-weighted portfolio optimisation
 """
 
 from __future__ import annotations
@@ -214,9 +215,78 @@ def portfolio() -> Any:
     return jsonify({"results": results, "summary": summary, "errors": errors})
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
+@app.post("/portfolio/optimize")
+def portfolio_optimize() -> Any:
+    """Return optimised portfolio weights for a list of tickers.
+
+    Uses a score-weighted allocation approach: each ticker's weight is
+    proportional to its composite score, then normalised to sum to 1.0.
+    Tickers with a SELL signal (score < 5.0) receive zero weight.
+
+    Request body (JSON):
+        {
+          "tickers": ["AAPL", "MSFT", "NVDA"],
+          "exclude_sell": true          # optional, default true
+        }
+
+    Response body (JSON):
+        {
+          "weights": {"AAPL": 0.45, "MSFT": 0.35, "NVDA": 0.20},
+          "scores":  {"AAPL": 8.09, "MSFT": 7.32, "NVDA": 7.69},
+          "signals": {"AAPL": "BUY", "MSFT": "BUY", "NVDA": "BUY"},
+          "errors":  []
+        }
+    """
+    body = request.get_json(silent=True) or {}
+    tickers = body.get("tickers", [])
+    exclude_sell = body.get("exclude_sell", True)
+
+    if not isinstance(tickers, list) or not tickers:
+        return jsonify({"error": "Provide a non-empty 'tickers' list"}), 400
+
+    tickers = [str(t).upper().strip() for t in tickers if str(t).strip()]
+    predictions: list[dict] = []
+    errors: list[dict] = []
+
+    for ticker in tickers:
+        try:
+            predictions.append(_build_prediction(ticker))
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Error predicting %s for optimisation", ticker)
+            errors.append({"ticker": ticker, "error": str(exc)})
+
+    # Build score map; optionally exclude SELL signals
+    score_map: dict[str, float] = {}
+    for pred in predictions:
+        score = pred["scores"]["total"]
+        if exclude_sell and pred["signal"] == "SELL":
+            score_map[pred["ticker"]] = 0.0
+        else:
+            score_map[pred["ticker"]] = max(0.0, score)
+
+    total_score = sum(score_map.values())
+    if total_score == 0.0:
+        # All signals are SELL; distribute equally among all tickers
+        n = len(predictions)
+        total_score = float(n)
+        score_map = {pred["ticker"]: 1.0 for pred in predictions}
+
+    weights = {
+        ticker: round(score / total_score, 4)
+        for ticker, score in score_map.items()
+    }
+
+    return jsonify(
+        {
+            "weights": weights,
+            "scores": {pred["ticker"]: pred["scores"]["total"] for pred in predictions},
+            "signals": {pred["ticker"]: pred["signal"] for pred in predictions},
+            "errors": errors,
+        }
+    )
+
+
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("API_PORT", API_PORT))

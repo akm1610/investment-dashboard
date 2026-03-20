@@ -205,14 +205,82 @@ class TestPortfolioEndpoint:
 
 
 # ---------------------------------------------------------------------------
-# Config: API_PORT
+# /portfolio/optimize
 # ---------------------------------------------------------------------------
 
 
+class TestPortfolioOptimizeEndpoint:
+    def test_valid_request_returns_200(self, client):
+        resp = client.post("/portfolio/optimize", json={"tickers": ["AAPL", "MSFT"]})
+        assert resp.status_code == 200
+
+    def test_response_contains_required_fields(self, client):
+        data = client.post("/portfolio/optimize", json={"tickers": ["AAPL", "MSFT"]}).get_json()
+        assert "weights" in data
+        assert "scores" in data
+        assert "signals" in data
+        assert "errors" in data
+
+    def test_weights_sum_to_one(self, client, monkeypatch):
+        import flask_api as api_module
+
+        def _fake_pred(ticker: str) -> dict:
+            total = {"AAPL": 8.0, "MSFT": 7.0, "NVDA": 6.0}.get(ticker, 5.0)
+            return {
+                **_FAKE_PREDICTION,
+                "ticker": ticker,
+                "signal": "BUY",
+                "scores": {**_FAKE_PREDICTION["scores"], "total": total},
+            }
+
+        monkeypatch.setattr(api_module, "_build_prediction", _fake_pred)
+        data = client.post(
+            "/portfolio/optimize", json={"tickers": ["AAPL", "MSFT", "NVDA"]}
+        ).get_json()
+        total_weight = sum(data["weights"].values())
+        assert abs(total_weight - 1.0) < 1e-6
+
+    def test_sell_excluded_when_flag_true(self, client, monkeypatch):
+        import flask_api as api_module
+
+        def _fake_pred(ticker: str) -> dict:
+            if ticker == "TSLA":
+                return {
+                    **_FAKE_PREDICTION,
+                    "ticker": "TSLA",
+                    "signal": "SELL",
+                    "scores": {**_FAKE_PREDICTION["scores"], "total": 3.0},
+                }
+            return {
+                **_FAKE_PREDICTION,
+                "ticker": ticker,
+                "signal": "BUY",
+                "scores": {**_FAKE_PREDICTION["scores"], "total": 8.0},
+            }
+
+        monkeypatch.setattr(api_module, "_build_prediction", _fake_pred)
+        data = client.post(
+            "/portfolio/optimize",
+            json={"tickers": ["AAPL", "TSLA"], "exclude_sell": True},
+        ).get_json()
+        assert data["weights"]["TSLA"] == 0.0
+
+    def test_empty_tickers_returns_400(self, client):
+        resp = client.post("/portfolio/optimize", json={"tickers": []})
+        assert resp.status_code == 400
+
+    def test_missing_tickers_key_returns_400(self, client):
+        resp = client.post("/portfolio/optimize", json={})
+        assert resp.status_code == 400
+
+
+
+
+
 class TestConfig:
-    def test_api_port_is_8001(self):
+    def test_api_port_is_9000(self):
         from src.config import API_PORT
-        assert API_PORT == 8001
+        assert API_PORT == 9000
 
     def test_dashboard_port_is_3000(self):
         from src.config import DASHBOARD_PORT
