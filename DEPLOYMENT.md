@@ -484,6 +484,134 @@ server {
 
 ---
 
+## Docker Deployment
+
+The full stack can be started with Docker Compose. This launches the Flask API and
+the React dashboard in isolated containers, connected via an internal Docker network.
+
+### Prerequisites
+
+- [Docker Engine](https://docs.docker.com/engine/install/) ≥ 24
+- [Docker Compose](https://docs.docker.com/compose/install/) v2 (bundled with Docker Desktop)
+
+### Quick start
+
+```bash
+# 1. Copy the example env file and fill in any secrets
+cp .env.example .env
+
+# 2. Build and start both containers
+docker compose up --build -d
+
+# 3. Check container health
+docker compose ps
+
+# API:       http://localhost:9000
+# Dashboard: http://localhost:3000
+```
+
+### Stopping containers
+
+```bash
+docker compose down
+```
+
+### Rebuilding after code changes
+
+```bash
+docker compose up --build -d
+```
+
+### Environment variables (Docker)
+
+Variables can be set in `.env` before running `docker compose up`.  
+See `.env.example` for the full list. The most important ones:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `API_PORT` | `9000` | Port the Flask API listens on |
+| `DASHBOARD_PORT` | `3000` | Port the React dashboard listens on |
+| `PROXY_TARGET` | `http://localhost:9000` | URL the Vite proxy forwards `/api/*` requests to; set to `http://api:9000` inside Docker Compose |
+| `NEWS_API_KEY` | _(empty)_ | [NewsAPI](https://newsapi.org) key for live headlines in the `/sentiment/<ticker>` endpoint |
+| `API_KEY` | _(empty)_ | When set, all non-`/health` endpoints require an `X-API-Key: <value>` request header |
+
+---
+
+## Security
+
+### Response headers
+
+Every response from the Flask API includes the following security headers:
+
+| Header | Value |
+|--------|-------|
+| `X-Content-Type-Options` | `nosniff` |
+| `X-Frame-Options` | `DENY` |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` |
+| `X-XSS-Protection` | `1; mode=block` |
+
+### API key authentication
+
+Set the `API_KEY` environment variable to enable key-based auth.  
+When set, every request (except `GET /health`) must include:
+
+```
+X-API-Key: <your-secret-key>
+```
+
+Example (bash):
+
+```bash
+export API_KEY="my-secret-key"
+
+# Authenticated request
+curl -H "X-API-Key: my-secret-key" http://localhost:9000/predict/AAPL
+
+# Returns 401 if key is wrong or missing
+curl http://localhost:9000/predict/AAPL
+# → {"error": "Unauthorized – missing or invalid X-API-Key header"}
+```
+
+### Production checklist
+
+- [ ] Set a strong `API_KEY` in production (or add a proper auth layer in front)
+- [ ] Run behind an SSL-terminating reverse proxy (nginx, Caddy, AWS ALB)
+- [ ] Set `FLASK_ENV=production` (debug mode disabled by default in `flask_api.py`)
+- [ ] Rotate `NEWS_API_KEY` regularly and store it in a secrets manager
+- [ ] Review container resource limits in `docker-compose.yml` for your workload
+
+---
+
+## Monitoring
+
+### `/metrics` endpoint
+
+The API exposes a lightweight runtime metrics endpoint:
+
+```bash
+curl http://localhost:9000/metrics
+```
+
+```json
+{
+  "uptime_seconds": 123.4,
+  "request_counts": {
+    "health": 5,
+    "predict": 12,
+    "portfolio": 3
+  },
+  "error_counts": {
+    "predict": 1
+  },
+  "timestamp": "2026-03-20T17:00:00+00:00"
+}
+```
+
+Use this to build simple uptime dashboards, alert on rising error counts, or feed
+data into Prometheus / Grafana via a scrape job.
+
+---
+
 ## Stopping All Services
 
 ```bash

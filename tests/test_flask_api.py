@@ -11,6 +11,10 @@ Strategy
   - /health endpoint returns 200 with status field
   - /predict/<ticker> happy path and validation error paths
   - /portfolio endpoint happy path and error handling
+  - /metrics endpoint returns uptime, request counts, and error counts
+  - /sentiment/<ticker> happy path, uppercasing, and error paths
+  - /portfolio/export CSV download with headers and data
+  - Security response headers on every endpoint
 """
 
 from __future__ import annotations
@@ -123,10 +127,13 @@ class TestPredictEndpoint:
     def test_error_propagated_as_500(self, monkeypatch):
         import flask_api as api_module
 
+        def _raise_prediction_error(ticker: str) -> None:
+            raise RuntimeError("network error")
+
         monkeypatch.setattr(
             api_module,
             "_build_prediction",
-            lambda ticker: (_ for _ in ()).throw(RuntimeError("network error")),
+            _raise_prediction_error,
         )
         api_module.app.config["TESTING"] = True
         with api_module.app.test_client() as c:
@@ -275,6 +282,164 @@ class TestPortfolioOptimizeEndpoint:
 
 
 
+
+
+# ---------------------------------------------------------------------------
+# /metrics
+# ---------------------------------------------------------------------------
+
+
+class TestMetricsEndpoint:
+    def test_returns_200(self, client):
+        resp = client.get("/metrics")
+        assert resp.status_code == 200
+
+    def test_response_contains_required_fields(self, client):
+        data = client.get("/metrics").get_json()
+        assert "uptime_seconds" in data
+        assert "request_counts" in data
+        assert "error_counts" in data
+        assert "timestamp" in data
+
+    def test_uptime_seconds_is_non_negative(self, client):
+        data = client.get("/metrics").get_json()
+        assert data["uptime_seconds"] >= 0
+
+    def test_request_counts_increments(self, client):
+        client.get("/health")
+        data = client.get("/metrics").get_json()
+        # At minimum the health and metrics endpoints should have been called
+        assert isinstance(data["request_counts"], dict)
+        total = sum(data["request_counts"].values())
+        assert total >= 1
+
+
+# ---------------------------------------------------------------------------
+# /sentiment/<ticker>
+# ---------------------------------------------------------------------------
+
+
+class TestSentimentEndpoint:
+    def test_returns_200(self, client, monkeypatch):
+        import flask_api as api_module
+
+        monkeypatch.setattr(api_module, "score_sentiment", lambda ticker: 6.5)
+        monkeypatch.setattr(api_module, "get_news_headlines", lambda ticker, max_articles=10: [])
+        resp = client.get("/sentiment/AAPL")
+        assert resp.status_code == 200
+
+    def test_response_contains_required_fields(self, client, monkeypatch):
+        import flask_api as api_module
+
+        monkeypatch.setattr(api_module, "score_sentiment", lambda ticker: 7.0)
+        monkeypatch.setattr(api_module, "get_news_headlines", lambda ticker, max_articles=10: [])
+        data = client.get("/sentiment/AAPL").get_json()
+        assert "ticker" in data
+        assert "sentiment_score" in data
+        assert "news_api_active" in data
+        assert "headlines" in data
+        assert "timestamp" in data
+
+    def test_ticker_uppercased(self, client, monkeypatch):
+        import flask_api as api_module
+
+        monkeypatch.setattr(api_module, "score_sentiment", lambda ticker: 5.5)
+        monkeypatch.setattr(api_module, "get_news_headlines", lambda ticker, max_articles=10: [])
+        data = client.get("/sentiment/aapl").get_json()
+        assert data["ticker"] == "AAPL"
+
+    def test_invalid_ticker_returns_400(self, client):
+        resp = client.get("/sentiment/123")
+        assert resp.status_code == 400
+
+    def test_error_returns_500(self, client, monkeypatch):
+        import flask_api as api_module
+
+        def _raise_sentiment_error(ticker: str) -> None:
+            raise RuntimeError("network error")
+
+        monkeypatch.setattr(
+            api_module,
+            "score_sentiment",
+            _raise_sentiment_error,
+        )
+        monkeypatch.setattr(api_module, "get_news_headlines", lambda ticker, max_articles=10: [])
+        resp = client.get("/sentiment/AAPL")
+        assert resp.status_code == 500
+        assert "error" in resp.get_json()
+
+
+# ---------------------------------------------------------------------------
+# /portfolio/export
+# ---------------------------------------------------------------------------
+
+
+class TestPortfolioExportEndpoint:
+    def test_returns_csv_content_type(self, client):
+        resp = client.get("/portfolio/export?tickers=AAPL,MSFT")
+        assert resp.status_code == 200
+        assert "text/csv" in resp.content_type
+
+    def test_csv_contains_header_row(self, client):
+        resp = client.get("/portfolio/export?tickers=AAPL")
+        text = resp.data.decode()
+        assert "ticker" in text
+        assert "signal" in text
+        assert "score_total" in text
+
+    def test_csv_contains_ticker_data(self, client):
+        resp = client.get("/portfolio/export?tickers=AAPL")
+        text = resp.data.decode()
+        lines = [l for l in text.strip().splitlines() if l]
+        # Header + at least one data row
+        assert len(lines) >= 2
+        assert "AAPL" in text
+
+    def test_missing_tickers_returns_400(self, client):
+        resp = client.get("/portfolio/export")
+        assert resp.status_code == 400
+
+    def test_empty_tickers_param_returns_400(self, client):
+        resp = client.get("/portfolio/export?tickers=")
+        assert resp.status_code == 400
+
+    def test_content_disposition_header_set(self, client):
+        resp = client.get("/portfolio/export?tickers=AAPL")
+        assert resp.status_code == 200
+        assert "attachment" in resp.headers.get("Content-Disposition", "")
+
+
+# ---------------------------------------------------------------------------
+# Security headers
+# ---------------------------------------------------------------------------
+
+
+class TestSecurityHeaders:
+    def test_x_content_type_options(self, client):
+        resp = client.get("/health")
+        assert resp.headers.get("X-Content-Type-Options") == "nosniff"
+
+    def test_x_frame_options(self, client):
+        resp = client.get("/health")
+        assert resp.headers.get("X-Frame-Options") == "DENY"
+
+    def test_referrer_policy(self, client):
+        resp = client.get("/health")
+        assert resp.headers.get("Referrer-Policy") == "strict-origin-when-cross-origin"
+
+    def test_x_xss_protection(self, client):
+        resp = client.get("/health")
+        assert resp.headers.get("X-XSS-Protection") == "1; mode=block"
+
+    def test_security_headers_present_on_predict(self, client):
+        resp = client.get("/predict/AAPL")
+        assert resp.headers.get("X-Content-Type-Options") == "nosniff"
+        assert resp.headers.get("X-Frame-Options") == "DENY"
+
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
 
 
 class TestConfig:

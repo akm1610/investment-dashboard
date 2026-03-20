@@ -1,0 +1,48 @@
+version: "3.9"
+
+# ---------------------------------------------------------------------------
+# Investment Dashboard – Full Stack
+# ---------------------------------------------------------------------------
+# Start:  docker compose up --build
+# Stop:   docker compose down
+#
+# Services
+# --------
+#   api        Flask REST API on http://localhost:9000
+#   dashboard  React (Nginx) dashboard on http://localhost:3000
+# ---------------------------------------------------------------------------
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: investment-api:latest
+    container_name: investment-api
+    ports:
+      - "${API_PORT:-9000}:9000"
+    env_file:
+      - .env.example   # override by mounting a real .env
+    environment:
+      - API_PORT=9000
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:9000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    image: investment-dashboard:latest
+    container_name: investment-dashboard
+    ports:
+      - "${DASHBOARD_PORT:-3000}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
