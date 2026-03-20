@@ -11,6 +11,10 @@ numpy>=1.26.0
 streamlit>=1.35.0
 plotly>=5.18.0
 
+# Flask REST API
+Flask>=3.0.0
+flask-cors>=4.0.0
+
 # Machine learning
 lightgbm>=4.0.0
 xgboost>=2.0.0

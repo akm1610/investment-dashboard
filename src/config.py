@@ -137,3 +137,10 @@ SIGNAL_STRENGTH_THRESHOLDS: dict = {
     "MODERATE": 60.0,
     # < 60 → WEAK
 }
+
+# ---------------------------------------------------------------------------
+# API server
+# ---------------------------------------------------------------------------
+
+API_PORT: int = 8001          # Flask REST API port (8000 may already be in use)
+DASHBOARD_PORT: int = 3000    # Streamlit dashboard port

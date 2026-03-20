@@ -583,21 +583,111 @@ def calculate_intelligent_score(
 # Private helpers (stubs for future live-data integration)
 # ---------------------------------------------------------------------------
 
-def _get_analyst_rating(ticker: str) -> Optional[float]:  # noqa: ARG001
-    """Return analyst rating (1–5) or None if unavailable."""
+def _get_analyst_rating(ticker: str) -> Optional[float]:
+    """Return analyst rating (1–5) or None if unavailable.
+
+    Fetches the consensus analyst recommendation from yfinance and maps it to
+    the 1–5 scale used internally (1 = strong buy, 5 = strong sell).
+    """
+    try:
+        import yfinance as yf  # lazy import to keep module importable without network
+
+        info = yf.Ticker(ticker).info
+        # ``recommendationMean`` is already on a 1–5 scale (1=strong buy, 5=strong sell)
+        rating = info.get("recommendationMean")
+        if rating is not None and 1.0 <= float(rating) <= 5.0:
+            return float(rating)
+    except Exception:  # noqa: BLE001
+        pass
     return None
 
 
-def _get_news_sentiment(ticker: str) -> Optional[float]:  # noqa: ARG001
-    """Return news sentiment score (-1 to +1) or None if unavailable."""
+def _get_news_sentiment(ticker: str) -> Optional[float]:
+    """Return news sentiment score (-1 to +1) or None if unavailable.
+
+    Uses yfinance recent news headlines and applies a keyword-based polarity
+    score.  Positive words score +1, negative words score -1.  The final
+    value is the mean polarity clipped to [-1, +1].
+    """
+    _POSITIVE_WORDS = {
+        "surge", "surges", "soar", "soars", "beat", "beats", "strong",
+        "growth", "record", "profit", "gain", "rally", "upgrade", "upgraded",
+        "bullish", "outperform", "exceed", "raised", "positive", "buy",
+        "opportunity", "innovative", "expansion", "robust", "solid",
+    }
+    _NEGATIVE_WORDS = {
+        "fall", "falls", "drop", "drops", "miss", "misses", "weak", "loss",
+        "losses", "decline", "cut", "downgrade", "downgraded", "bearish",
+        "underperform", "concern", "lawsuit", "warning", "crash", "sell",
+        "risk", "volatile", "debt", "layoff", "layoffs", "recall", "fraud",
+    }
+
+    try:
+        import yfinance as yf  # lazy import
+
+        news = yf.Ticker(ticker).news or []
+        scores: list[float] = []
+        for article in news[:20]:  # cap at 20 recent articles
+            title = (article.get("title") or "").lower()
+            words = set(title.split())
+            pos = len(words & _POSITIVE_WORDS)
+            neg = len(words & _NEGATIVE_WORDS)
+            if pos + neg > 0:
+                scores.append((pos - neg) / (pos + neg))
+
+        if scores:
+            mean_score = sum(scores) / len(scores)
+            return max(-1.0, min(1.0, mean_score))
+    except Exception:  # noqa: BLE001
+        pass
     return None
 
 
-def _get_insider_activity(ticker: str) -> Optional[float]:  # noqa: ARG001
-    """Return net insider share activity or None if unavailable."""
+def _get_insider_activity(ticker: str) -> Optional[float]:
+    """Return net insider share activity or None if unavailable.
+
+    Fetches recent insider transactions via yfinance and returns the net
+    number of shares bought (positive) or sold (negative).
+    """
+    try:
+        import yfinance as yf  # lazy import
+
+        insider = yf.Ticker(ticker).insider_transactions
+        if insider is None or insider.empty:
+            return None
+        # Transactions have a ``Shares`` column (positive = buy, negative = sell)
+        if "Shares" in insider.columns:
+            net_shares = float(insider["Shares"].sum())
+            return net_shares
+    except Exception:  # noqa: BLE001
+        pass
     return None
 
 
-def _get_etf_inclusion(ticker: str) -> list:  # noqa: ARG001
-    """Return list of ETF tickers that include this stock, or empty list."""
-    return []
+def _get_etf_inclusion(ticker: str) -> list:
+    """Return list of ETF tickers that include this stock, or empty list.
+
+    Checks whether the ticker appears in the holdings of major ETFs (SPY, QQQ,
+    IWM) by querying yfinance.  Only SPY/QQQ/IWM are checked to keep the call
+    fast.  An exception (e.g. network error) returns an empty list.
+    """
+    _MAJOR_ETFS = ["SPY", "QQQ", "IWM"]
+    found: list[str] = []
+    try:
+        import yfinance as yf  # lazy import
+
+        ticker_upper = ticker.upper()
+        for etf in _MAJOR_ETFS:
+            try:
+                # ``funds_data.top_holdings`` returns a DataFrame indexed by ticker
+                # symbol with at least a ``Weight`` column (yfinance ≥ 0.2.x).
+                holdings = yf.Ticker(etf).funds_data.top_holdings
+                if holdings is not None and not holdings.empty:
+                    symbols = holdings.index.str.upper().tolist()
+                    if ticker_upper in symbols:
+                        found.append(etf)
+            except Exception:  # noqa: BLE001
+                pass
+    except Exception:  # noqa: BLE001
+        pass
+    return found
