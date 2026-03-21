@@ -54,6 +54,13 @@ for _path in [_HERE, _SRC]:
 from flask import Flask, Response, jsonify, request
 from flask_cors import CORS
 
+# Load environment variables from .env file if present (optional dependency)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # python-dotenv not installed; env vars must be set manually
+
 from src.config import API_PORT
 from src.data_fetcher import DataFetcher
 from src.ml_engine import RecommendationEngine, FeatureEngineer
@@ -66,6 +73,7 @@ from src.scoring_engine import (
     score_etf_exposure,
     stretch_distribution,
     get_news_headlines,
+    get_news_sentiment,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s – %(message)s")

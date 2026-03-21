@@ -153,6 +153,65 @@ pytest tests/ -v
 
 ---
 
+## NewsAPI Integration
+
+The sentiment scoring engine can use live news headlines from [NewsAPI](https://newsapi.org)
+to produce a more accurate sentiment signal.
+
+### Setup
+
+1. Obtain a free API key from <https://newsapi.org>.
+2. Copy `.env.example` to `.env` and set your key:
+
+   ```ini
+   NEWS_API_KEY=your_newsapi_key_here
+   ```
+
+3. The Flask API and scoring engine will automatically load the `.env` file
+   via `python-dotenv` (installed with `pip install -r requirements.txt`).
+
+### How it works
+
+| Scenario | Behaviour |
+|----------|-----------|
+| `NEWS_API_KEY` is set | Headlines are fetched from `newsapi.org/v2/everything` for the ticker and scored with keyword-based polarity |
+| `NEWS_API_KEY` is absent or API call fails | Falls back to yfinance news headlines for the same ticker |
+| No matching keyword in any headline | Sentiment returns `None`; the overall score stays at neutral 5.0 |
+
+Responses are cached for **15 minutes** to avoid exhausting the free-tier rate limit (100 requests/day).
+
+The live news sentiment feeds directly into:
+- `score_sentiment(ticker)` → contributes 5 % to the composite score
+- `GET /predict/<ticker>` response (`scores.sentiment`)
+- `GET /sentiment/<ticker>` response (`sentiment_score`, `news_api_active`, `headlines`)
+
+### Public API
+
+```python
+from src.scoring_engine import get_news_sentiment, get_news_headlines
+
+# Returns a float in [-1, +1] or None if no headlines match
+score = get_news_sentiment("AAPL")
+
+# Returns a list of dicts: title, url, published_at, source, polarity
+headlines = get_news_headlines("AAPL", max_articles=10)
+```
+
+---
+
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `API_PORT` | `9000` | Port the Flask API listens on |
+| `API_KEY` | _(empty)_ | Optional API key for request authentication |
+| `NEWS_API_KEY` | _(empty)_ | [NewsAPI](https://newsapi.org) key for live headline sentiment |
+| `RATELIMIT_DEFAULT` | `200 per day;60 per minute` | Flask-Limiter rate limit string |
+
+Copy `.env.example` to `.env` and fill in values before starting the server.
+
+---
+
 ## Project Structure
 
 ```
