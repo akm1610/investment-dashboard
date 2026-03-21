@@ -212,10 +212,72 @@ Copy `.env.example` to `.env` and fill in values before starting the server.
 
 ---
 
+## Running the Frontend Dashboard
+
+The static dashboard lives in the `frontend/` folder at the root of this repository.
+
+### Step 1 — Confirm you are in the project root
+
+```bash
+# You should see a list that includes "frontend"
+ls
+```
+
+If you do **not** see `frontend` in the output, navigate to the project root first:
+
+```bash
+cd /path/to/investment-dashboard
+```
+
+### Step 2 — Start the HTTP server
+
+```bash
+cd frontend
+python3 -m http.server 3000
+```
+
+Then open <http://localhost:3000> in your browser.
+
+### Troubleshooting
+
+#### `cd: no such file or directory: frontend`
+
+You are not in the project root directory.  Run `ls` to check your current location.  
+Navigate to the folder that **contains** the `frontend` directory before running `cd frontend`.
+
+#### `OSError: [Errno 48] Address already in use`
+
+Port 3000 is occupied by another process.  You have two options:
+
+**Option A — kill the process on port 3000**
+
+```bash
+# Find the process ID (PID) using the port
+lsof -i :3000
+
+# Kill it (replace <PID> with the number shown above)
+kill -9 <PID>
+
+# Then retry
+python3 -m http.server 3000
+```
+
+**Option B — use a different port**
+
+```bash
+python3 -m http.server 3001
+```
+
+Then open <http://localhost:3001> in your browser.
+
+---
+
 ## Project Structure
 
 ```
 investment-dashboard/
+├── frontend/
+│   └── index.html          # Static dashboard UI
 ├── src/
 │   ├── __init__.py
 │   └── data_fetcher.py
