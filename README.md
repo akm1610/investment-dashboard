@@ -16,6 +16,34 @@ The system helps analyse company fundamentals, track portfolio health, and enfor
 
 ---
 
+## Streamlit Dashboard
+
+The primary interface is a **multi-page Streamlit app** (`src/app.py`) that integrates
+all analysis—fundamental, technical, ML, and **sentiment**—for any ticker symbol.
+
+### Pages
+
+| Page | Icon | Description |
+|------|------|-------------|
+| Company Analysis | 🔍 | Fundamental scores, ratios, price chart, pre-trade checklist, and **Sentiment Analysis panel** |
+| Portfolio Overview | 💼 | Holdings, allocation, and rebalancing |
+| Pre-Trade Checklist | ✅ | 7-item decision gate |
+| Investment Journal | 📓 | Timestamped thesis records |
+| Risk & Recommendations | 🛡️ | Risk profile assessment and curated watchlists |
+| Strategy Backtesting | 📈 | Historical strategy testing and validation |
+| Sentiment Analysis | 📰 | Real-time news sentiment, analyst consensus, and insider activity for any ticker |
+
+### Running the Streamlit App
+
+```bash
+# From the repository root
+streamlit run src/app.py
+```
+
+Open <http://localhost:8501> in your browser.
+
+---
+
 ## Quick Start
 
 ### 1 · Clone & create a virtual environment
@@ -167,7 +195,7 @@ to produce a more accurate sentiment signal.
    NEWS_API_KEY=your_newsapi_key_here
    ```
 
-3. The Flask API and scoring engine will automatically load the `.env` file
+3. The Streamlit app, Flask API, and scoring engine will automatically load the `.env` file
    via `python-dotenv` (installed with `pip install -r requirements.txt`).
 
 ### How it works
@@ -180,10 +208,16 @@ to produce a more accurate sentiment signal.
 
 Responses are cached for **15 minutes** to avoid exhausting the free-tier rate limit (100 requests/day).
 
-The live news sentiment feeds directly into:
-- `score_sentiment(ticker)` → contributes 5 % to the composite score
-- `GET /predict/<ticker>` response (`scores.sentiment`)
-- `GET /sentiment/<ticker>` response (`sentiment_score`, `news_api_active`, `headlines`)
+### Where sentiment appears
+
+- **Company Analysis page** – an embedded **Sentiment Analysis** panel shows a gauge,
+  verdict badge (Bullish / Neutral / Bearish), analyst consensus, and a headlines table
+  with per-headline polarity whenever you analyse a ticker.
+- **Sentiment Analysis page** – a dedicated page for an in-depth view: polarity distribution
+  chart, headline count breakdown, and a natural-language summary.
+- **Scoring engine** – `score_sentiment(ticker)` contributes 5 % to the composite score.
+- **Flask API** – `GET /predict/<ticker>` response (`scores.sentiment`) and
+  `GET /sentiment/<ticker>` response (`sentiment_score`, `news_api_active`, `headlines`).
 
 ### Public API
 

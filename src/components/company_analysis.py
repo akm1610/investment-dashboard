@@ -9,6 +9,7 @@ Provides:
 * Financial ratios table (organised by category)
 * 5-year interactive price chart with optional moving averages
 * Pre-trade checklist with PASS / WARN / FAIL status
+* Sentiment Analysis panel (news headlines, analyst consensus, insider activity)
 * "Add to Portfolio" action
 """
 
@@ -24,6 +25,12 @@ import os
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
+
+_SRC = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _SRC not in sys.path:
+    sys.path.insert(0, _SRC)
+
+from typing import Optional
 
 import pandas as pd
 import plotly.express as px
@@ -44,11 +51,102 @@ from .utils import (
     score_color,
     status_emoji,
 )
+from .sentiment_analysis import fetch_sentiment_data as _fetch_sentiment_data, _analyst_rating_label
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def _fetch_and_analyze(symbol: str) -> dict:
+    """Fetch fundamentals and run full analysis; results are cached for 1 h."""
+    fundamentals = df_mod.fetch_all_fundamentals(symbol)
+    analysis = ae.analyze(fundamentals)
+    analysis["fundamentals"] = fundamentals
+    return analysis
+
+
+def _render_sentiment_section(symbol: str) -> None:
+    """Render the sentiment analysis panel for *symbol* inside Company Analysis."""
+    with st.spinner("Loading sentiment data …"):
+        data = _fetch_sentiment_data(symbol, max_articles=10)
+
+    if data["error"]:
+        st.warning(f"Sentiment data unavailable: {data['error']}")
+        return
+
+    headlines: list = data["headlines"]
+    news_sentiment: Optional[float] = data["news_sentiment"]
+    analyst_rating: Optional[float] = data["analyst_rating"]
+    analyst_label: Optional[str] = data["analyst_label"]
+    news_api_active: bool = data["news_api_active"]
+
+    # Overall verdict
+    if news_sentiment is None:
+        verdict, badge_color = "Neutral", "#e65100"
+    elif news_sentiment > 0.05:
+        verdict, badge_color = "Bullish", "#2e7d32"
+    elif news_sentiment < -0.05:
+        verdict, badge_color = "Bearish", "#c62828"
+    else:
+        verdict, badge_color = "Neutral", "#e65100"
+
+    sent_col1, sent_col2 = st.columns([1, 2])
+
+    with sent_col1:
+        # Map polarity [-1, +1] → gauge [0, 100]
+        gauge_score = max(0.0, min(100.0, ((news_sentiment or 0.0) + 1.0) * 50.0))
+        st.plotly_chart(
+            display_score_gauge(gauge_score, "Sentiment Score"),
+            use_container_width=True,
+            key=f"ca_sent_gauge_{symbol}",
+        )
+        st.markdown(
+            f'<div style="text-align:center;">'
+            f'<span style="background:{badge_color};color:white;padding:4px 16px;'
+            f'border-radius:12px;font-weight:600;">{verdict}</span></div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown("<br>", unsafe_allow_html=True)
+        if analyst_rating is not None:
+            label_str = _analyst_rating_label(analyst_rating, analyst_label)
+            st.metric("Analyst Consensus", label_str, f"{analyst_rating:.1f}/5.0")
+        source_note = "NewsAPI" if news_api_active else "Yahoo Finance (fallback)"
+        st.caption(f"📡 Source: {source_note}")
+
+    with sent_col2:
+        if not headlines:
+            st.info(
+                "No headlines available. "
+                + ("Set `NEWS_API_KEY` in `.env` for live news." if not news_api_active else "")
+            )
+        else:
+            rows = []
+            for article in headlines:
+                title = article.get("title", "")
+                url = article.get("url", "")
+                src = article.get("source", "")
+                polarity = article.get("polarity")
+                if polarity is None:
+                    sent_str = "🟡 Neutral"
+                elif polarity > 0.05:
+                    sent_str = "🟢 Positive"
+                elif polarity < -0.05:
+                    sent_str = "🔴 Negative"
+                else:
+                    sent_str = "🟡 Neutral"
+                rows.append({
+                    "Headline": f"[{title}]({url})" if url else title,
+                    "Source": src,
+                    "Sentiment": sent_str,
+                })
+            st.dataframe(
+                pd.DataFrame(rows),
+                use_container_width=True,
+                hide_index=True,
+            )
 
 
 @st.cache_data(show_spinner=False, ttl=3600)
@@ -320,6 +418,12 @@ def page_company_analysis() -> None:
     st.progress(progress_val, text=f"{passed}/{total} items passed")
 
     display_checklist(checklist)
+
+    st.markdown("---")
+
+    # --- Sentiment Analysis ---
+    st.subheader("📰 Sentiment Analysis")
+    _render_sentiment_section(symbol)
 
     st.markdown("---")
 
