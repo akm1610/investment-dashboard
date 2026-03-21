@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Investment Dashboard</title>
+    <meta charset="UTF-8">
+  </head>
+  <body>
+    <h1>Investment Dashboard</h1>
+    <button id="predict">Get AAPL Prediction</button>
+    <pre id="result"></pre>
+    <script>
+      document.getElementById('predict').onclick = async () => {
+        const resp = await fetch('http://localhost:9000/predict/AAPL');
+        const data = await resp.json();
+        document.getElementById('result').textContent = JSON.stringify(data, null, 2);
+      };
+    </script>
+  </body>
+</html>
