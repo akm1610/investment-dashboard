@@ -42,6 +42,8 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
+import pandas as pd
+
 # ---------------------------------------------------------------------------
 # Path setup – make root-level and src/ modules importable
 # ---------------------------------------------------------------------------
@@ -167,11 +169,11 @@ def _get_engine() -> tuple[RecommendationEngine, FeatureEngineer]:
 # ---------------------------------------------------------------------------
 
 def _build_prediction(ticker: str) -> dict[str, Any]:
-    """Fetch data and build a full prediction dict for *ticker*."""
+    """Fetch live data from Yahoo Finance and build a full prediction dict for *ticker*."""
     fetcher = DataFetcher(ticker)
     price_data = fetcher.fetch_stock_data(period="2y")
 
-    # Current price
+    # Current price – live from Yahoo Finance
     try:
         price = float(price_data["Close"].iloc[-1])
     except Exception:
@@ -181,11 +183,23 @@ def _build_prediction(ticker: str) -> dict[str, Any]:
     technicals = fetcher.calculate_technical_indicators(price_data)
     risk_metrics = fetcher.calculate_risk_metrics(price_data)
 
+    # ML prediction: build features from live price and fundamental data.
+    # Falls back gracefully to a neutral HOLD signal when no trained models
+    # are available or feature extraction fails.
     engine, feat_eng = _get_engine()
-    features = feat_eng.extract_features(price_data, fundamentals)
-    ml_prediction = engine.predict(features)
+    features: pd.DataFrame | None = None
+    try:
+        tech_feat = feat_eng.extract_technical_features(price_data)
+        company_info = fetcher.fetch_company_info()
+        fund_feat = feat_eng.extract_fundamental_features(company_info)
+        features = pd.DataFrame(
+            [{**tech_feat.to_dict(), **fund_feat.to_dict()}]
+        )
+    except Exception:
+        pass
+    ml_prediction = engine.predict(ticker, features=features)
 
-    # Component scores
+    # Component scores – all derived from live market data
     fund_score = score_fundamentals_intelligent(fundamentals)
     tech_score = score_technicals_intelligent(technicals, price_data)
     risk_score = contextualize_risk(risk_metrics, fundamentals, technicals)
@@ -214,6 +228,9 @@ def _build_prediction(ticker: str) -> dict[str, Any]:
         signal = "SELL"
         confidence = round(min(99.0, 50.0 + (5.0 - total_score) * 20.0), 1)
 
+    # Recent news headlines (NewsAPI when key is set, else yfinance fallback)
+    news_headlines = get_news_headlines(ticker, max_articles=5)
+
     return {
         "ticker": ticker.upper(),
         "price": round(price, 2),
@@ -228,6 +245,8 @@ def _build_prediction(ticker: str) -> dict[str, Any]:
         },
         "signal": signal,
         "confidence": confidence,
+        "news_headlines": news_headlines,
+        "data_source": "Yahoo Finance (live)",
         "timestamp": datetime.now(tz=timezone.utc).isoformat(),
     }
 

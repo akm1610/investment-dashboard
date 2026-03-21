@@ -212,6 +212,73 @@ Copy `.env.example` to `.env` and fill in values before starting the server.
 
 ---
 
+## Running the Flask Backend API
+
+The backend API (`flask_api.py`) fetches **live, real-time data** from Yahoo Finance
+for any requested ticker.  No API key is needed for stock price and fundamental
+data — yfinance handles that automatically.  An optional [NewsAPI](https://newsapi.org)
+key enables richer news headline sentiment (free tier: 100 requests/day).
+
+### Step 1 — Set up environment variables (optional)
+
+```bash
+cp .env.example .env
+# Edit .env to set NEWS_API_KEY if you want live news headlines
+```
+
+> **Getting a free NewsAPI key**
+> 1. Visit <https://newsapi.org/register> and create a free account.
+> 2. Copy the generated key into `.env`:
+>    ```bash
+>    NEWS_API_KEY=your_key_here
+>    ```
+> 3. If you skip this step, sentiment falls back to yfinance news headlines automatically.
+
+### Step 2 — Start the API server
+
+```bash
+python flask_api.py
+```
+
+The server starts on port **9000** by default.  You should see:
+
+```
+INFO flask_api – Starting Investment API on port 9000
+```
+
+### Step 3 — Test a live prediction
+
+```bash
+curl http://localhost:9000/predict/AAPL
+```
+
+A successful response returns **real market data** including the current price,
+component scores derived from live fundamentals and technicals, a BUY/HOLD/SELL
+signal, and the most recent news headlines — all stamped with the current UTC
+timestamp.
+
+#### Example response fields
+
+| Field | Description |
+|-------|-------------|
+| `price` | Latest closing price from Yahoo Finance |
+| `scores.fundamentals` | Scored from live P/E, ROE, margins, debt ratios |
+| `scores.technicals` | Scored from live RSI, MACD, SMA200 comparison |
+| `scores.sentiment` | Keyword polarity of recent news headlines |
+| `scores.ml` | ML ensemble signal (defaults to neutral when models not trained) |
+| `news_headlines` | Up to 5 recent headlines (NewsAPI or yfinance fallback) |
+| `data_source` | Always `"Yahoo Finance (live)"` |
+
+### Error handling
+
+| Scenario | HTTP status | Response |
+|----------|-------------|----------|
+| Invalid ticker (numbers, too long) | `400` | `{"error": "…"}` |
+| Ticker not found / delisted | `500` | `{"error": "…", "ticker": "XYZ"}` |
+| Rate limit exceeded | `429` | Flask-Limiter default response |
+
+---
+
 ## Running the Frontend Dashboard
 
 The static dashboard lives in the `frontend/` folder at the root of this repository.

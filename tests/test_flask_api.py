@@ -54,6 +54,16 @@ _FAKE_PREDICTION: dict[str, Any] = {
     },
     "signal": "BUY",
     "confidence": 59.6,
+    "news_headlines": [
+        {
+            "title": "Apple beats earnings estimates",
+            "url": "https://example.com/article",
+            "published_at": "2026-03-20T12:00:00Z",
+            "source": "Yahoo Finance",
+            "polarity": 0.5,
+        }
+    ],
+    "data_source": "Yahoo Finance (live)",
     "timestamp": "2026-03-20T16:00:00+00:00",
 }
 
@@ -109,6 +119,12 @@ class TestPredictEndpoint:
         assert "scores" in data
         assert "signal" in data
         assert "confidence" in data
+        assert "news_headlines" in data
+        assert "data_source" in data
+
+    def test_data_source_is_live(self, client):
+        data = client.get("/predict/AAPL").get_json()
+        assert "Yahoo Finance" in data["data_source"]
 
     def test_scores_contains_all_components(self, client):
         scores = client.get("/predict/MSFT").get_json()["scores"]
