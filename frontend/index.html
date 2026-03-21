@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Investment Dashboard</title>
+    <meta charset="UTF-8">
+  </head>
+  <body>
+    <h1>Investment Dashboard</h1>
+    <button id="predict">Get AAPL Prediction</button>
+    <pre id="result"></pre>
+    <script>
+      document.getElementById('predict').onclick = async () => {
+        const result = document.getElementById('result');
+        try {
+          const resp = await fetch('http://localhost:9000/predict/AAPL');
+          if (!resp.ok) {
+            result.textContent = 'Error: ' + resp.status + ' ' + resp.statusText;
+            return;
+          }
+          const data = await resp.json();
+          result.textContent = JSON.stringify(data, null, 2);
+        } catch (err) {
+          result.textContent = 'Error: ' + err.message;
+        }
+      };
+    </script>
+  </body>
+</html>
