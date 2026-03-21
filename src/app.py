@@ -11,13 +11,14 @@ Architecture
 * Multi-page app using ``st.navigation()`` and ``st.Page()``
 * Session state for portfolio persistence and analysis caching
 * Sidebar for navigation, quick-add form, and settings
-* Six pages:
-  1. Company Analysis        – deep-dive into a single ticker
+* Seven pages:
+  1. Company Analysis        – deep-dive into a single ticker (incl. sentiment panel)
   2. Portfolio Overview      – holdings, allocation, rebalancing
   3. Pre-Trade Checklist     – 7-item decision gate
   4. Investment Journal      – timestamped thesis records
   5. Risk & Recommendations  – risk profile assessment + curated watchlists
   6. Strategy Backtesting    – historical strategy testing and validation
+  7. Sentiment Analysis      – real-time news & market sentiment for any ticker
 """
 
 from __future__ import annotations
@@ -48,6 +49,7 @@ from components.portfolio_overview import page_portfolio_overview
 from components.pretrade_checklist import page_pretrade_checklist
 from components.risk_recommendations import page_risk_recommendations
 from components.backtesting import page_backtesting
+from components.sentiment_analysis import page_sentiment_analysis
 from components.sidebar import render_sidebar
 
 logging.basicConfig(level=logging.WARNING)
@@ -124,6 +126,7 @@ def main() -> None:
         st.Page(page_investment_journal, title="Investment Journal", icon="📓"),
         st.Page(page_risk_recommendations, title="Risk & Recommendations", icon="🛡️"),
         st.Page(page_backtesting, title="Strategy Backtesting", icon="📈"),
+        st.Page(page_sentiment_analysis, title="Sentiment Analysis", icon="📰"),
     ]
 
     page = st.navigation(pages)
