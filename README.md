@@ -44,7 +44,115 @@ Open <http://localhost:8501> in your browser.
 
 ---
 
-## Quick Start
+## Unified Quick Start
+
+The fastest way to run the **entire system** (Flask API + Streamlit dashboard)
+from a **single terminal** after cloning:
+
+```bash
+git clone https://github.com/akm1610/investment-dashboard.git
+cd investment-dashboard
+chmod +x run_all.sh
+./run_all.sh
+```
+
+That single command:
+1. Creates and activates a Python virtual environment (`.venv/`) automatically.
+2. Installs all Python dependencies from `requirements.txt`.
+3. Detects and resolves port conflicts interactively.
+4. Starts the **Flask prediction API** on port **9000** in the background.
+5. Starts the **Streamlit dashboard** on port **8501** in the background.
+6. Opens the dashboard in your browser automatically.
+7. Prints a status table with all service URLs.
+8. Shuts down both services cleanly when you press **Ctrl+C**.
+
+### Available commands
+
+| Command | Description |
+|---------|-------------|
+| `./run_all.sh` | Install deps and start all services (default) |
+| `./run_all.sh --no-install` | Skip pip install for faster restart |
+| `./run_all.sh --force` | Auto-kill port conflicts without prompting (for CI/scripts) |
+| `./run_all.sh --api-only` | Start only the Flask API |
+| `./run_all.sh --streamlit-only` | Start only the Streamlit dashboard |
+| `./run_all.sh stop` | Stop all managed services |
+| `./run_all.sh restart` | Stop then start all services |
+| `./run_all.sh status` | Show which services are running |
+| `./run_all.sh logs` | Tail live logs from all services |
+
+### Makefile shortcuts (requires `make`)
+
+```bash
+make all        # start everything (default)
+make stop       # stop all services
+make restart    # stop + restart
+make status     # check running services
+make logs       # tail live logs
+make test       # run test suite
+make install    # install Python deps only
+make check      # verify ports are free
+make help       # print all targets
+```
+
+Override ports on the command line:
+
+```bash
+make all API_PORT=9001 STREAMLIT_PORT=8502
+```
+
+### Service URLs
+
+| Service | Default URL | Description |
+|---------|-------------|-------------|
+| Streamlit dashboard | <http://localhost:8501> | Full interactive UI |
+| Flask API | <http://localhost:9000> | REST prediction API |
+| API health check | <http://localhost:9000/health> | Liveness probe |
+| Stock prediction | <http://localhost:9000/predict/AAPL> | Example endpoint |
+
+### Port conflicts
+
+If a port is already in use, `run_all.sh` will show the occupying PID and ask
+whether to kill it.  You can also free ports manually:
+
+```bash
+# Find what is using port 9000
+lsof -i :9000
+
+# Kill by PID (replace 1234 with the actual PID)
+kill -9 1234
+
+# Or use a different port
+API_PORT=9001 ./run_all.sh
+```
+
+### Logs
+
+All service logs are written to `logs/`:
+
+```
+logs/flask_api.log   – Flask API output
+logs/streamlit.log   – Streamlit output
+```
+
+### Windows notes
+
+`run_all.sh` and the Makefile are designed for **macOS and Linux**.
+On Windows, use [Git Bash](https://git-scm.com/downloads) or
+[WSL](https://learn.microsoft.com/en-us/windows/wsl/) to run `./run_all.sh`.
+
+Alternatively, open two terminals and start each service manually:
+
+```powershell
+# Terminal 1 – Flask API
+python flask_api.py
+
+# Terminal 2 – Streamlit dashboard
+streamlit run src/app.py
+```
+
+---
+
+## Quick Start (manual setup)
 
 ### 1 · Clone & create a virtual environment
 

@@ -13,7 +13,7 @@ warn()    { echo -e "${YELLOW}[WARN]${RESET}  $*"; }
 
 echo -e "\nStopping Investment Dashboard services…\n"
 
-for service in flask_api react_dashboard; do
+for service in flask_api react_dashboard streamlit; do
   PID_FILE="${LOG_DIR}/${service}.pid"
   if [[ -f "$PID_FILE" ]]; then
     PID=$(cat "$PID_FILE")
