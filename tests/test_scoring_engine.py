@@ -10,6 +10,7 @@ from src.scoring_engine import (
     score_sentiment,
     score_etf_exposure,
     stretch_distribution,
+    get_news_sentiment,
 )
 
 
@@ -320,6 +321,157 @@ class TestScoreSentiment:
         # Stubs return None so the score stays at baseline 5.0
         result = score_sentiment("AAPL")
         assert result == pytest.approx(5.0)
+
+
+# ---------------------------------------------------------------------------
+# get_news_sentiment
+# ---------------------------------------------------------------------------
+
+class TestGetNewsSentiment:
+    """Unit tests for the public get_news_sentiment function."""
+
+    def test_returns_none_when_no_headlines_no_api_key(self, monkeypatch):
+        """Without API key and no yfinance data, should return None."""
+        monkeypatch.delenv("NEWS_API_KEY", raising=False)
+
+        # Stub yfinance to return empty news
+        import src.scoring_engine as se
+        monkeypatch.setattr(
+            se,
+            "_NEWS_SENTIMENT_CACHE",
+            {},
+        )
+
+        import unittest.mock as mock
+        with mock.patch("yfinance.Ticker") as mock_ticker:
+            mock_ticker.return_value.news = []
+            result = get_news_sentiment("AAPL")
+
+        assert result is None
+
+    def test_returns_float_in_range_for_positive_headlines(self, monkeypatch):
+        """Positive headlines should produce a score in [-1, +1]."""
+        monkeypatch.delenv("NEWS_API_KEY", raising=False)
+
+        import unittest.mock as mock
+        positive_news = [
+            {"title": "Apple surges to record profit growth rally"},
+            {"title": "Strong beat by Apple bullish upgrade outperform"},
+        ]
+        with mock.patch("yfinance.Ticker") as mock_ticker:
+            mock_ticker.return_value.news = positive_news
+            result = get_news_sentiment("AAPL")
+
+        assert result is not None
+        assert -1.0 <= result <= 1.0
+        assert result > 0.0  # positive sentiment expected
+
+    def test_returns_float_in_range_for_negative_headlines(self, monkeypatch):
+        """Negative headlines should produce a score in [-1, +1]."""
+        monkeypatch.delenv("NEWS_API_KEY", raising=False)
+
+        import unittest.mock as mock
+        negative_news = [
+            {"title": "Apple falls on weak earnings loss decline"},
+            {"title": "Apple downgrade bearish crash debt lawsuit warning"},
+        ]
+        with mock.patch("yfinance.Ticker") as mock_ticker:
+            mock_ticker.return_value.news = negative_news
+            result = get_news_sentiment("AAPL")
+
+        assert result is not None
+        assert -1.0 <= result <= 1.0
+        assert result < 0.0  # negative sentiment expected
+
+    def test_uses_newsapi_when_key_set(self, monkeypatch):
+        """When NEWS_API_KEY is set, should query NewsAPI and return a score."""
+        monkeypatch.setenv("NEWS_API_KEY", "test-key-123")
+
+        import unittest.mock as mock
+
+        mock_response = mock.MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "articles": [
+                {"title": "Apple beats earnings with record growth"},
+                {"title": "Apple strong rally upgrade bullish"},
+            ]
+        }
+
+        with mock.patch("requests.get", return_value=mock_response) as mock_get:
+            result = get_news_sentiment("AAPL")
+
+        mock_get.assert_called_once()
+        call_kwargs = mock_get.call_args
+        called_url: str = call_kwargs[0][0]
+        assert called_url.startswith("https://newsapi.org/")
+        assert result is not None
+        assert -1.0 <= result <= 1.0
+
+    def test_falls_back_to_yfinance_when_newsapi_fails(self, monkeypatch):
+        """Should fall back to yfinance when the NewsAPI request raises."""
+        monkeypatch.setenv("NEWS_API_KEY", "test-key-123")
+
+        import unittest.mock as mock
+
+        with mock.patch("requests.get", side_effect=Exception("connection error")):
+            with mock.patch("yfinance.Ticker") as mock_ticker:
+                mock_ticker.return_value.news = [
+                    {"title": "Apple soars on strong growth profit"}
+                ]
+                result = get_news_sentiment("AAPL")
+
+        assert result is not None
+        assert -1.0 <= result <= 1.0
+
+    def test_falls_back_to_yfinance_when_newsapi_returns_non_200(self, monkeypatch):
+        """Should fall back to yfinance when NewsAPI returns a non-200 status."""
+        monkeypatch.setenv("NEWS_API_KEY", "test-key-123")
+
+        import unittest.mock as mock
+
+        mock_response = mock.MagicMock()
+        mock_response.status_code = 429  # rate limited
+
+        with mock.patch("requests.get", return_value=mock_response):
+            with mock.patch("yfinance.Ticker") as mock_ticker:
+                mock_ticker.return_value.news = [
+                    {"title": "Apple rally gain record profit"}
+                ]
+                result = get_news_sentiment("AAPL")
+
+        assert result is not None
+        assert -1.0 <= result <= 1.0
+
+    def test_returns_none_when_headlines_have_no_keywords(self, monkeypatch):
+        """Headlines with no sentiment keywords should return None."""
+        monkeypatch.delenv("NEWS_API_KEY", raising=False)
+
+        import unittest.mock as mock
+        neutral_news = [
+            {"title": "Apple Inc. quarterly filing"},
+            {"title": "Tim Cook attends conference"},
+        ]
+        with mock.patch("yfinance.Ticker") as mock_ticker:
+            mock_ticker.return_value.news = neutral_news
+            result = get_news_sentiment("AAPL")
+
+        assert result is None
+
+    def test_score_impacts_sentiment_score_function(self, monkeypatch):
+        """A positive news sentiment should push score_sentiment above 5.0."""
+        monkeypatch.delenv("NEWS_API_KEY", raising=False)
+
+        import src.scoring_engine as se
+        import unittest.mock as mock
+
+        # Patch the private helper used by score_sentiment to return a positive value
+        with mock.patch.object(se, "_get_news_sentiment", return_value=0.8):
+            with mock.patch.object(se, "_get_analyst_rating", return_value=None):
+                with mock.patch.object(se, "_get_insider_activity", return_value=None):
+                    result = score_sentiment("AAPL")
+
+        assert result > 5.0
 
 
 # ---------------------------------------------------------------------------

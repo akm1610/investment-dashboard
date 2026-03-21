@@ -30,3 +30,6 @@ flask-limiter>=3.5.0
 # Development / testing
 pytest>=8.0.0
 pytest-mock>=3.14.0
+
+# Environment variable loading
+python-dotenv>=1.0.0

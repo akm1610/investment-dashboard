@@ -7,10 +7,19 @@ across the full 0–10 range instead of clustering everything around 4.5–6.
 
 from __future__ import annotations
 
+import time
 from typing import Dict, Optional
 
 import numpy as np
 import pandas as pd
+
+# ---------------------------------------------------------------------------
+# Simple TTL cache for NewsAPI responses (avoids hitting rate limits)
+# ---------------------------------------------------------------------------
+
+_NEWS_SENTIMENT_CACHE: dict[str, tuple[Optional[float], float]] = {}
+_NEWS_HEADLINES_CACHE: dict[tuple[str, int], tuple[list[dict], float]] = {}
+_NEWS_CACHE_TTL: int = 900  # 15 minutes
 
 
 # ---------------------------------------------------------------------------
@@ -638,6 +647,33 @@ def _get_news_sentiment(ticker: str) -> Optional[float]:
     polarity scoring.  Falls back to yfinance news headlines when the key is
     absent or the NewsAPI call fails.  The final value is the mean polarity
     clipped to [-1, +1].
+
+    Results are cached for ``_NEWS_CACHE_TTL`` seconds to avoid exhausting
+    the NewsAPI free-tier rate limit.
+    """
+    cached = _NEWS_SENTIMENT_CACHE.get(ticker)
+    if cached is not None:
+        value, ts = cached
+        if time.monotonic() - ts < _NEWS_CACHE_TTL:
+            return value
+
+    result = get_news_sentiment(ticker)
+    _NEWS_SENTIMENT_CACHE[ticker] = (result, time.monotonic())
+    return result
+
+
+def get_news_sentiment(ticker: str) -> Optional[float]:
+    """Return news sentiment score (-1 to +1) or None if unavailable.
+
+    If the ``NEWS_API_KEY`` environment variable is set, fetches live
+    headlines from NewsAPI (https://newsapi.org) and applies keyword-based
+    polarity scoring.  Falls back to yfinance news headlines when the key is
+    absent or the NewsAPI call fails.  The final value is the mean polarity
+    clipped to [-1, +1].
+
+    This is the public interface for the news sentiment computation.  For
+    internal use within the scoring pipeline (where the cached version is
+    preferred) use ``_get_news_sentiment``.
     """
     import os
     import requests  # already a transitive dependency
@@ -698,7 +734,17 @@ def get_news_headlines(ticker: str, max_articles: int = 10) -> list[dict]:
     and ``source``.  Used by the ``/sentiment/<ticker>`` API endpoint.
     Supports optional NewsAPI integration via the ``NEWS_API_KEY`` env var
     and falls back to yfinance headlines.
+
+    Results are cached for ``_NEWS_CACHE_TTL`` seconds to avoid exhausting
+    the NewsAPI free-tier rate limit.
     """
+    cache_key = (ticker, max_articles)
+    cached = _NEWS_HEADLINES_CACHE.get(cache_key)
+    if cached is not None:
+        articles, ts = cached
+        if time.monotonic() - ts < _NEWS_CACHE_TTL:
+            return articles
+
     import os
     import requests
 
@@ -753,6 +799,7 @@ def get_news_headlines(ticker: str, max_articles: int = 10) -> list[dict]:
         except Exception:  # noqa: BLE001
             pass
 
+    _NEWS_HEADLINES_CACHE[cache_key] = (articles, time.monotonic())
     return articles
 
 
