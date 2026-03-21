@@ -14,6 +14,7 @@ E. Analyst rating and insider activity summary
 
 from __future__ import annotations
 
+import logging
 import sys
 import os
 
@@ -37,10 +38,27 @@ import streamlit as st
 
 from .utils import display_score_gauge
 
+_log = logging.getLogger(__name__)
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _analyst_rating_label(analyst_rating: float, analyst_label: Optional[str] = None) -> str:
+    """Return a human-readable label for an analyst rating on the 1–5 scale."""
+    if analyst_label:
+        return analyst_label
+    if analyst_rating <= 1.5:
+        return "Strong Buy"
+    if analyst_rating <= 2.5:
+        return "Buy"
+    if analyst_rating <= 3.5:
+        return "Hold"
+    if analyst_rating <= 4.5:
+        return "Sell"
+    return "Strong Sell"
 
 
 def _sentiment_label(score: Optional[float]) -> tuple[str, str]:
@@ -74,11 +92,25 @@ def _polarity_bar(polarity: Optional[float]) -> str:
 
 
 @st.cache_data(show_spinner=False, ttl=900)
-def _fetch_sentiment_data(symbol: str) -> dict:
+def fetch_sentiment_data(symbol: str, max_articles: int = 15) -> dict:
     """Fetch and return all sentiment-related data for *symbol*.
 
-    Results are cached for 15 minutes (900 s) to respect NewsAPI free-tier
-    rate limits (100 requests / day).
+    This is the shared public implementation used by both the Sentiment Analysis
+    page and the Company Analysis embedded panel.  Results are cached for
+    15 minutes (900 s) to respect NewsAPI free-tier rate limits (100 req/day).
+
+    Parameters
+    ----------
+    symbol:
+        Stock ticker (e.g. ``"AAPL"``).
+    max_articles:
+        Maximum number of headlines to retrieve.
+
+    Returns
+    -------
+    dict with keys ``headlines``, ``news_sentiment``, ``analyst_rating``,
+    ``analyst_label``, ``insider_net``, ``news_api_active``, ``source``,
+    and ``error``.
     """
     try:
         from scoring_engine import (  # type: ignore[import]
@@ -87,7 +119,7 @@ def _fetch_sentiment_data(symbol: str) -> dict:
         )
         import yfinance as yf
 
-        headlines = get_news_headlines(symbol, max_articles=15)
+        headlines = get_news_headlines(symbol, max_articles=max_articles)
         news_sentiment = get_news_sentiment(symbol)
 
         # Analyst rating from yfinance (1 = strong buy, 5 = strong sell)
@@ -100,8 +132,8 @@ def _fetch_sentiment_data(symbol: str) -> dict:
                 analyst_rating = float(rating)
                 key = info.get("recommendationKey", "").lower()
                 analyst_label = key.replace("_", " ").title() if key else None
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            _log.debug("Could not fetch analyst rating for %s: %s", symbol, exc)
 
         # Insider net share activity
         insider_net: Optional[float] = None
@@ -109,12 +141,17 @@ def _fetch_sentiment_data(symbol: str) -> dict:
             insider_df = yf.Ticker(symbol).insider_transactions
             if insider_df is not None and not insider_df.empty and "Shares" in insider_df.columns:
                 insider_net = float(insider_df["Shares"].sum())
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            _log.debug("Could not fetch insider transactions for %s: %s", symbol, exc)
 
         # Determine data source
         news_api_key = os.environ.get("NEWS_API_KEY", "").strip()
-        source = "NewsAPI" if (news_api_key and headlines and headlines[0].get("source") != "Yahoo Finance") else "Yahoo Finance (fallback)"
+        news_api_active = bool(news_api_key)
+        source = (
+            "NewsAPI"
+            if (news_api_active and headlines and headlines[0].get("source") != "Yahoo Finance")
+            else "Yahoo Finance (fallback)"
+        )
 
         return {
             "headlines": headlines,
@@ -122,6 +159,7 @@ def _fetch_sentiment_data(symbol: str) -> dict:
             "analyst_rating": analyst_rating,
             "analyst_label": analyst_label,
             "insider_net": insider_net,
+            "news_api_active": news_api_active,
             "source": source,
             "error": None,
         }
@@ -132,9 +170,14 @@ def _fetch_sentiment_data(symbol: str) -> dict:
             "analyst_rating": None,
             "analyst_label": None,
             "insider_net": None,
+            "news_api_active": False,
             "source": "N/A",
             "error": str(exc),
         }
+
+
+# Keep the private alias for backward compatibility within this module.
+_fetch_sentiment_data = fetch_sentiment_data
 
 
 # ---------------------------------------------------------------------------
@@ -219,9 +262,7 @@ def page_sentiment_analysis() -> None:
         _render_sentiment_badge(sentiment_label, sentiment_color)
 
         if analyst_rating is not None:
-            rating_map = {1: "Strong Buy", 2: "Buy", 3: "Hold", 4: "Sell", 5: "Strong Sell"}
-            closest = min(rating_map.keys(), key=lambda k: abs(k - analyst_rating))
-            label_str = analyst_label or rating_map.get(closest, "N/A")
+            label_str = _analyst_rating_label(analyst_rating, analyst_label)
             st.metric(
                 label="Analyst Consensus",
                 value=label_str,
@@ -280,10 +321,9 @@ def page_sentiment_analysis() -> None:
             use_container_width=True,
             hide_index=True,
             column_config={
-                "Headline": st.column_config.LinkColumn(
+                "Headline": st.column_config.TextColumn(
                     "Headline",
-                    help="Click to open article",
-                    display_text=r"(.+)\((.+)\)" if rows and rows[0]["Headline"].startswith("[") else None,
+                    help="News headline",
                 ),
             },
         )

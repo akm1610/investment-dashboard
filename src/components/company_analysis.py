@@ -51,6 +51,7 @@ from .utils import (
     score_color,
     status_emoji,
 )
+from .sentiment_analysis import fetch_sentiment_data as _fetch_sentiment_data, _analyst_rating_label
 
 
 # ---------------------------------------------------------------------------
@@ -58,56 +59,19 @@ from .utils import (
 # ---------------------------------------------------------------------------
 
 
-@st.cache_data(show_spinner=False, ttl=900)
-def _fetch_sentiment(symbol: str) -> dict:
-    """Fetch news sentiment data for *symbol*; cached for 15 minutes."""
-    try:
-        from scoring_engine import (  # type: ignore[import]
-            get_news_headlines,
-            get_news_sentiment,
-        )
-        import yfinance as yf
-
-        headlines = get_news_headlines(symbol, max_articles=10)
-        news_sentiment = get_news_sentiment(symbol)
-
-        analyst_rating: Optional[float] = None
-        analyst_label: Optional[str] = None
-        try:
-            info = yf.Ticker(symbol).info
-            rating = info.get("recommendationMean")
-            if rating is not None and 1.0 <= float(rating) <= 5.0:
-                analyst_rating = float(rating)
-                key = info.get("recommendationKey", "").lower()
-                analyst_label = key.replace("_", " ").title() if key else None
-        except Exception:  # noqa: BLE001
-            pass
-
-        news_api_active = bool(os.environ.get("NEWS_API_KEY", "").strip())
-
-        return {
-            "headlines": headlines,
-            "news_sentiment": news_sentiment,
-            "analyst_rating": analyst_rating,
-            "analyst_label": analyst_label,
-            "news_api_active": news_api_active,
-            "error": None,
-        }
-    except Exception as exc:  # noqa: BLE001
-        return {
-            "headlines": [],
-            "news_sentiment": None,
-            "analyst_rating": None,
-            "analyst_label": None,
-            "news_api_active": False,
-            "error": str(exc),
-        }
+@st.cache_data(show_spinner=False, ttl=3600)
+def _fetch_and_analyze(symbol: str) -> dict:
+    """Fetch fundamentals and run full analysis; results are cached for 1 h."""
+    fundamentals = df_mod.fetch_all_fundamentals(symbol)
+    analysis = ae.analyze(fundamentals)
+    analysis["fundamentals"] = fundamentals
+    return analysis
 
 
 def _render_sentiment_section(symbol: str) -> None:
     """Render the sentiment analysis panel for *symbol* inside Company Analysis."""
     with st.spinner("Loading sentiment data …"):
-        data = _fetch_sentiment(symbol)
+        data = _fetch_sentiment_data(symbol, max_articles=10)
 
     if data["error"]:
         st.warning(f"Sentiment data unavailable: {data['error']}")
@@ -147,13 +111,7 @@ def _render_sentiment_section(symbol: str) -> None:
         )
         st.markdown("<br>", unsafe_allow_html=True)
         if analyst_rating is not None:
-            label_str = analyst_label or (
-                "Strong Buy" if analyst_rating <= 1.5 else
-                "Buy" if analyst_rating <= 2.5 else
-                "Hold" if analyst_rating <= 3.5 else
-                "Sell" if analyst_rating <= 4.5 else
-                "Strong Sell"
-            )
+            label_str = _analyst_rating_label(analyst_rating, analyst_label)
             st.metric("Analyst Consensus", label_str, f"{analyst_rating:.1f}/5.0")
         source_note = "NewsAPI" if news_api_active else "Yahoo Finance (fallback)"
         st.caption(f"📡 Source: {source_note}")
@@ -175,8 +133,10 @@ def _render_sentiment_section(symbol: str) -> None:
                     sent_str = "🟡 Neutral"
                 elif polarity > 0.05:
                     sent_str = "🟢 Positive"
-                else:
+                elif polarity < -0.05:
                     sent_str = "🔴 Negative"
+                else:
+                    sent_str = "🟡 Neutral"
                 rows.append({
                     "Headline": f"[{title}]({url})" if url else title,
                     "Source": src,
@@ -189,7 +149,8 @@ def _render_sentiment_section(symbol: str) -> None:
             )
 
 
-
+@st.cache_data(show_spinner=False, ttl=3600)
+def _fetch_and_analyze(symbol: str) -> dict:
     """Fetch fundamentals and run full analysis; results are cached for 1 h."""
     fundamentals = df_mod.fetch_all_fundamentals(symbol)
     analysis = ae.analyze(fundamentals)
