@@ -62,15 +62,6 @@ from .sentiment_analysis import fetch_sentiment_data as _fetch_sentiment_data, _
 # ---------------------------------------------------------------------------
 
 
-@st.cache_data(show_spinner=False, ttl=3600)
-def _fetch_and_analyze(symbol: str) -> dict:
-    """Fetch fundamentals and run full analysis; results are cached for 1 h."""
-    fundamentals = df_mod.fetch_all_fundamentals(symbol)
-    analysis = ae.analyze(fundamentals)
-    analysis["fundamentals"] = fundamentals
-    return analysis
-
-
 def _render_sentiment_section(symbol: str) -> None:
     """Render the sentiment analysis panel for *symbol* inside Company Analysis."""
     with st.spinner("Loading sentiment data …"):
