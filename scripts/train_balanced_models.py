@@ -97,13 +97,22 @@ def _build_dataset(tickers: List[str]) -> tuple:
             )
             continue
 
+        # Normalise column names – yfinance ≥ 0.2.x may return a MultiIndex
+        # DataFrame with (price_type, ticker) tuple columns.  Flatten to plain
+        # strings so that downstream .lower() and column-access calls work
+        # correctly regardless of yfinance version.
+        if isinstance(price_df.columns, pd.MultiIndex):
+            price_df = price_df.copy()
+            price_df.columns = price_df.columns.get_level_values(0)
+        price_df.columns = [str(c) for c in price_df.columns]
+
         try:
             feat_df = engineer.extract_technical_features(price_df, days=len(price_df))
         except Exception as exc:
             log.error("Error processing %s: %s", ticker, exc)
             continue
 
-        labels = generate_labels(price_df["Close"], FORWARD_DAYS, RETURN_THRESHOLD)
+        labels = generate_labels(price_df["Close"], "short_term", RETURN_THRESHOLD)
 
         common_idx = feat_df.index.intersection(labels.index)
         if len(common_idx) < 50:
