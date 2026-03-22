@@ -135,7 +135,12 @@ def main() -> None:
         )
         return
 
-    _init_session_state()
+    try:
+        _init_session_state()
+    except Exception as exc:
+        st.error(f"⚠️ Failed to initialise session state: {exc}")
+        st.exception(exc)
+        return
 
     # Sidebar (navigation + quick-add + settings)
     try:
