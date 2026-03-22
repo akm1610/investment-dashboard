@@ -22,13 +22,16 @@ import os
 # Ensure root-level modules are importable when running as
 # ``streamlit run src/app.py`` regardless of the working directory.
 # ---------------------------------------------------------------------------
-_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if _ROOT not in sys.path:
-    sys.path.insert(0, _ROOT)
-
 _SRC = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
+
+# Insert _ROOT last so it ends up at position 0 (highest priority).  This
+# prevents src/analysis_engine.py (a re-export shim) from shadowing the
+# root-level analysis_engine.py, which would cause a circular-import error.
+_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 
 from typing import Optional
 
