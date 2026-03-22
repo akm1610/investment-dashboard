@@ -276,6 +276,28 @@ class TestFeatureEngineerTechnical:
         result = self.fe.extract_technical_features(df)
         assert isinstance(result, pd.DataFrame)
 
+    def test_multiindex_columns_accepted(self):
+        """yfinance ≥ 0.2.x / 1.x may return a MultiIndex (price_type, ticker)."""
+        df = self.price_df.copy()
+        ticker = "AAPL"
+        df.columns = pd.MultiIndex.from_tuples(
+            [(c, ticker) for c in df.columns], names=["Price", "Ticker"]
+        )
+        assert isinstance(df.columns, pd.MultiIndex)
+        result = self.fe.extract_technical_features(df)
+        assert isinstance(result, pd.DataFrame)
+        assert result.shape[1] >= 25
+
+    def test_multiindex_columns_do_not_raise_tuple_lower_error(self):
+        """Regression: tuple columns must not cause 'tuple has no attribute lower'."""
+        df = self.price_df.copy()
+        df.columns = pd.MultiIndex.from_tuples(
+            [(c, "MSFT") for c in df.columns], names=["Price", "Ticker"]
+        )
+        # Should complete without AttributeError
+        result = self.fe.extract_technical_features(df)
+        assert "rsi_14" in result.columns
+
 
 class TestFeatureEngineerFundamental:
     def setup_method(self):
@@ -828,6 +850,29 @@ class TestDataCollector:
         with patch.object(self.collector, "fetch_all_data", return_value=fake_data):
             self.collector.update_cache("GOOGL")
         assert "GOOGL" not in self.collector._cache
+
+    @patch("yfinance.Ticker")
+    def test_fetch_all_data_normalises_multiindex_columns(self, mock_ticker_cls):
+        """fetch_all_data must flatten MultiIndex columns from yfinance 1.x."""
+        price_df = _make_price_df(50)
+        multi_idx = pd.MultiIndex.from_tuples(
+            [(c, "AAPL") for c in price_df.columns], names=["Price", "Ticker"]
+        )
+        price_df_multi = price_df.copy()
+        price_df_multi.columns = multi_idx
+
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = price_df_multi
+        mock_ticker.info = {}
+        mock_ticker_cls.return_value = mock_ticker
+
+        result = self.collector.fetch_all_data("AAPL")
+        ph = result["price_history"]
+        # All column names must be plain strings, not tuples
+        assert all(isinstance(c, str) for c in ph.columns), (
+            "Column names should be strings after MultiIndex flattening"
+        )
+        assert "Close" in ph.columns or "close" in ph.columns
 
 
 # ===========================================================================

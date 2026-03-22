@@ -156,8 +156,15 @@ def _validate_ticker(ticker: str) -> str:
 
 
 def _clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    """Drop columns and rows that are entirely NaN; reset column names."""
+    """Drop columns and rows that are entirely NaN; reset column names.
+
+    Handles yfinance ≥ 0.2.x / 1.x which may return a MultiIndex DataFrame
+    with (price_type, ticker) tuple columns.  The first level (price type)
+    is retained so downstream code can access columns by name (e.g. "Close").
+    """
     df = df.dropna(how="all", axis=1).dropna(how="all", axis=0)
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
     df.columns = [str(c) for c in df.columns]
     return df
 

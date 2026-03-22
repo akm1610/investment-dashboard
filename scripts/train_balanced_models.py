@@ -112,7 +112,19 @@ def _build_dataset(tickers: List[str]) -> tuple:
             log.error("Error processing %s: %s", ticker, exc)
             continue
 
-        labels = generate_labels(price_df["Close"], "short_term", RETURN_THRESHOLD)
+        # Resolve the close-price column case-insensitively so the script
+        # works regardless of whether yfinance returns "Close" or "close".
+        col_map = {c.lower(): c for c in price_df.columns}
+        close_col = col_map.get("close")
+        if close_col is None:
+            log.warning("Skipping %s – no 'Close' column found", ticker)
+            continue
+
+        try:
+            labels = generate_labels(price_df[close_col], "short_term", RETURN_THRESHOLD)
+        except Exception as exc:
+            log.error("Error generating labels for %s: %s", ticker, exc)
+            continue
 
         common_idx = feat_df.index.intersection(labels.index)
         if len(common_idx) < 50:
