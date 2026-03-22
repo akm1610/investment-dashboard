@@ -248,8 +248,11 @@ class FeatureEngineer:
         DataFrame with one row per trading day, one column per indicator.
         """
         df = price_df.copy()
-        # Normalise column names
-        df.columns = [c.lower() for c in df.columns]
+        # Normalise column names – flatten MultiIndex (e.g. yfinance ≥ 0.2.x
+        # may return (price_type, ticker) tuples) before lower-casing.
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        df.columns = [str(c).lower() for c in df.columns]
         required = {"open", "high", "low", "close", "volume"}
         missing = required - set(df.columns)
         if missing:
@@ -518,7 +521,10 @@ class FeatureEngineer:
             compute correlation and relative-strength features.
         """
         df = price_df.copy()
-        df.columns = [c.lower() for c in df.columns]
+        # Flatten MultiIndex columns before lower-casing (yfinance ≥ 0.2.x compat)
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        df.columns = [str(c).lower() for c in df.columns]
         close = df["close"]
         high = df["high"]
         low = df["low"]
@@ -563,7 +569,9 @@ class FeatureEngineer:
         # Market correlation (vs S&P500 proxy)
         if market_df is not None and not market_df.empty:
             mkt = market_df.copy()
-            mkt.columns = [c.lower() for c in mkt.columns]
+            if isinstance(mkt.columns, pd.MultiIndex):
+                mkt.columns = mkt.columns.get_level_values(0)
+            mkt.columns = [str(c).lower() for c in mkt.columns]
             # Align on common dates
             common = close.index.intersection(mkt.index)
             if len(common) >= 20:
@@ -1407,6 +1415,11 @@ class DataCollector:
 
         # Price history (5 years of daily OHLCV)
         price_history = yf_ticker.history(period="5y", auto_adjust=True)
+        # Normalise columns: yfinance ≥ 0.2.x can return a MultiIndex
+        # (price_type, ticker) – flatten to plain string names immediately.
+        if isinstance(price_history.columns, pd.MultiIndex):
+            price_history.columns = price_history.columns.get_level_values(0)
+        price_history.columns = [str(c) for c in price_history.columns]
 
         # Company info
         try:
